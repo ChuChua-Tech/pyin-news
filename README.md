@@ -8,7 +8,7 @@ the reporting and subjects that matter, read a finite edition with a beginning
 and an end, then get on with your day.
 
 PYIN is a private, keyboard-first, tiled news reader for Omarchy. It ships with
-a catalog of 200 RSS/Atom feeds, groups repeated coverage into events, and
+a catalog of 226 RSS/Atom feeds, groups repeated coverage into events, and
 ranks those events locally using choices you can inspect and change. AI runs
 only when you explicitly request it.
 
@@ -137,7 +137,7 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 - a 50-entry keyword blacklist that hard-filters the feed and alert notifications
 - independent, nonprofit, local, community, expert, original-research,
   mainstream, and grassroots source packs
-- a searchable catalogue showing every publisher, feed host, region, and source type
+- a searchable catalogue showing every publisher, feed host, region, source type, and topic
 - individual sources to hide plus up to 50 user-added RSS or Atom feeds
 - open-minded, broad, or familiar-first discovery ratios
 - desktop-alert quiet hours and a daily notification ceiling
@@ -148,6 +148,10 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 The app always inherits the active Omarchy palette, controls, borders, spacing,
 and type. The density choice changes layout without creating a competing theme.
 Every choice is visible later under Profile, and `c` reopens the wizard.
+Geography is deliberately separate from subject topics: the saved location
+provides each reader's local and national lens, while country names such as
+Canada remain ordinary searchable source metadata rather than privileged
+universal categories.
 
 ## Navigation, History, and Profile
 
@@ -394,11 +398,12 @@ the feed.
 
 ## Sources and local data
 
-The bundled 200-source list spans Canadian and Kamloops/BC reporting, Indigenous outlets,
+The bundled 226-source list spans Canadian and Kamloops/BC reporting, Indigenous outlets,
 public broadcasters, independent and nonprofit newsrooms, established general
 news, and country- or region-rooted reporting across Africa, Asia, Europe,
 Latin America, Oceania, and the Pacific, alongside competing political traditions, fact-checking,
-media criticism, technology, science, health, and primary institutions. More
+media criticism, technology, science, health, sports, gaming, official Omarchy
+updates, and primary institutions. More
 sources improve breadth, but source count is not a claim of neutrality.
 Descriptive, overlapping source-format metadata is maintained separately in
 `source-catalog.json` under CC0-1.0 and contains no proprietary political-bias

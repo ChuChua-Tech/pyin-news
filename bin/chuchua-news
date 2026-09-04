@@ -116,7 +116,8 @@ INTEREST_NOISE_WORDS = STOPWORDS | {
     "long", "made", "make", "many", "move", "near", "order", "possible",
     "public", "say", "show", "single", "take", "three", "week", "world",
     "government", "minister", "president", "politics", "business", "culture",
-    "society", "communities", "technology", "science", "health", "conflict",
+    "society", "communities", "technology", "omarchy", "gaming", "sports",
+    "science", "health", "conflict",
     "policy", "justice", "history", "ideas", "research", "human", "rights",
     "centre", "centres", "center", "centers", "command", "cost", "costs",
     "data", "depends", "dire", "gave", "gift", "gifts", "giving", "going",
@@ -148,16 +149,18 @@ SIGNAL_LABELS = {
 }
 
 TOPIC_CATALOG = [
-    {"value": "canada", "label": "Canada", "description": "Canadian politics, communities, and public policy"},
     {"value": "world", "label": "World", "description": "International reporting and under-covered regions"},
     {"value": "politics", "label": "Politics", "description": "Government, elections, policy, and accountability"},
     {"value": "technology", "label": "Technology", "description": "Technology, the internet, and digital society"},
+    {"value": "omarchy", "label": "Omarchy", "description": "Omarchy releases, plugins, community, and desktop ecosystem"},
+    {"value": "gaming", "label": "Gaming", "description": "Video games, studios, platforms, releases, and games culture"},
     {"value": "cybersecurity", "label": "Cybersecurity", "description": "Security, privacy, fraud, and infrastructure"},
     {"value": "science", "label": "Science", "description": "Research, mathematics, physics, and biology"},
     {"value": "climate", "label": "Climate", "description": "Climate, environment, energy, and conservation"},
     {"value": "investigations", "label": "Investigations", "description": "Deep reporting, corruption, and accountability"},
     {"value": "business", "label": "Business", "description": "Economics, labour, companies, and markets"},
     {"value": "health", "label": "Health", "description": "Medicine, public health, and health policy"},
+    {"value": "sports", "label": "Sports", "description": "Teams, athletes, leagues, competition, and sports culture"},
     {"value": "culture", "label": "Culture", "description": "Media, communities, arts, and society"},
     {"value": "justice", "label": "Justice", "description": "Courts, policing, rights, and criminal justice"},
     {"value": "labour", "label": "Labour", "description": "Workers, unions, wages, and workplace power"},
@@ -2251,8 +2254,14 @@ def setup_state(profile: dict[str, Any] | None = None) -> dict[str, Any]:
                                 for value in source.get("types", [])
                             ),
                         ]
+                        + ([
+                            "topics " + "/".join(
+                                str(value) for value in source.get("topics", [])[:5]
+                            )
+                        ] if source.get("topics") else [])
                         + (["YOUR SOURCE"] if source.get("custom") else [])
                     ),
+                    "topics": source.get("topics", []),
                     "types": source.get("types", []),
                     "languages": source.get("languages", []),
                     "regions": source.get("regions", []),

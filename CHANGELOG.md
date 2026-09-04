@@ -9,6 +9,10 @@ Versioning.
 
 - Clickable Omarchy subject-alert notifications that summon PYIN and open the
   exact cached story, with persisted deep links in notification history
+- First-class Sports, Gaming, and Omarchy topics backed by 26 fetched and
+  parser-verified feeds, bringing the bundled catalog to 226 sources
+- Geography-neutral setup topics: local and national relevance now comes only
+  from each reader's optional country, region, and city profile
 
 ## [0.18.0] - 2026-09-04
 

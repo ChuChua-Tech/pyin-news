@@ -693,7 +693,7 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "Priorities are explicit and visible. Must-see topics get the strongest boost, interests get a normal boost, and muted topics are pushed down."
+          text: "Priorities are explicit and visible. Must-see topics get the strongest boost, interests get a normal boost, and muted topics are pushed down. Geographic relevance comes from the country, region, and city on the previous page."
           color: wizard.dim
           font.family: wizard.fontFamily
           font.pixelSize: Style.font.body
@@ -866,7 +866,7 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "Open the searchable list to see every publisher, feed host, region, and source format. A checked source is individually hidden."
+          text: "Open the searchable list to see every publisher, feed host, region, source format, and topic. A checked source is individually hidden."
           color: wizard.dim
           font.family: wizard.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -879,7 +879,7 @@ FocusScope {
           showLabel: false
           triggerLabel: "Browse all source names and feed hosts…"
           noSelectionText: "Browse all source names and feed hosts…"
-          placeholderText: "Search publisher, host, region, or type…"
+          placeholderText: "Search publisher, host, region, type, or topic…"
           emptyText: "No catalog sources"
           values: wizard.disabledSourceIds
           options: wizard.effectiveSourceOptions

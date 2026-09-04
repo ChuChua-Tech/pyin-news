@@ -47,7 +47,7 @@ class ReleasePackageTests(unittest.TestCase):
     def test_source_catalog_is_complete_and_unique(self):
         sources = load_json("sources.json")
         catalog = load_json("source-catalog.json")
-        self.assertEqual(len(sources), 200)
+        self.assertEqual(len(sources), 226)
 
         names = [source["name"].strip() for source in sources]
         urls = [source["url"].strip() for source in sources]
@@ -62,6 +62,63 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertIn(parsed.scheme, {"http", "https"})
             self.assertTrue(parsed.netloc)
             self.assertIsInstance(source.get("topics", []), list)
+
+    def test_vertical_topics_have_real_source_packs(self):
+        backend = load_backend()
+        sources = load_json("sources.json")
+        topic_values = {topic["value"] for topic in backend.TOPIC_CATALOG}
+        expected_pack_sizes = {"sports": 13, "gaming": 11, "omarchy": 2}
+
+        self.assertNotIn("canada", topic_values)
+        for topic, expected_count in expected_pack_sizes.items():
+            self.assertIn(topic, topic_values)
+            matching = [
+                source for source in sources
+                if topic in {str(value).casefold() for value in source.get("topics", [])}
+            ]
+            self.assertEqual(len(matching), expected_count)
+
+    def test_location_relevance_replaces_a_country_specific_topic(self):
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            backend.CONFIG_DIR = base / "config"
+            backend.STATE_DIR = base / "state"
+            backend.DB_PATH = backend.STATE_DIR / "news.sqlite3"
+            now = 1_800_000_000
+            profile = backend.default_setup_profile()
+            profile["complete"] = True
+            profile["location"] = {"country": "Canada", "region": "", "city": ""}
+            conn = backend.db()
+            with conn:
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('setup_profile', ?)",
+                    (json.dumps(profile),),
+                )
+                conn.executemany(
+                    "INSERT INTO articles "
+                    "(id, url, title, source, feed_summary, published_ts, fetched_ts, source_topics) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            "local-story", "https://example.ca/local", "Community update",
+                            "The Tyee", "A regional report.", now, now,
+                            json.dumps(["Canada"]),
+                        ),
+                        (
+                            "other-story", "https://example.com/other", "Distant update",
+                            "ProPublica", "An unrelated report.", now, now,
+                            json.dumps(["United States"]),
+                        ),
+                    ],
+                )
+            conn.close()
+
+            with mock.patch.object(backend.time, "time", return_value=now):
+                articles, _stats = backend.ranked_articles(15)
+
+        self.assertEqual(articles[0]["id"], "local-story")
+        self.assertEqual(articles[0]["reason"], "near you")
 
     def test_release_documents_reference_public_commands(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -100,8 +157,8 @@ class ReleasePackageTests(unittest.TestCase):
             report = json.loads(completed.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual(report["curation_engine"], "v3")
-            self.assertEqual(report["sources"], 200)
-            self.assertEqual(report["catalog_sources"], 200)
+            self.assertEqual(report["sources"], 226)
+            self.assertEqual(report["catalog_sources"], 226)
             self.assertFalse(report["setup_complete"])
 
     def test_feed_parser_repairs_an_isolated_legacy_byte(self):
