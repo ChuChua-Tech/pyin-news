@@ -3,6 +3,13 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## Unreleased
+
+### Added
+
+- Clickable Omarchy subject-alert notifications that summon PYIN and open the
+  exact cached story, with persisted deep links in notification history
+
 ## [0.18.0] - 2026-09-04
 
 Initial public release.

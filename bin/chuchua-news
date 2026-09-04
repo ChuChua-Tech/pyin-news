@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 
 
 APP_ID = "chuchua-news"
+PLUGIN_ID = "tech.chuchua.news"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -3727,6 +3728,70 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
     }
 
 
+def get_article(article_id_value: str) -> dict[str, Any]:
+    """Return one cached story for notification and other deep links."""
+    article_id_value = str(article_id_value or "").strip()
+    if not article_id_value:
+        raise ValueError("article id is required")
+    now = int(time.time())
+    conn = db()
+    row = conn.execute(
+        "SELECT * FROM articles WHERE id = ?", (article_id_value,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("article not found")
+    bookmarked = conn.execute(
+        "SELECT 1 FROM bookmarks WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    read = conn.execute(
+        "SELECT 1 FROM read_articles WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    dismissed = conn.execute(
+        "SELECT 1 FROM dismissed_articles WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    alert = conn.execute(
+        "SELECT alerts.query FROM alert_hits "
+        "JOIN alerts ON alerts.id = alert_hits.alert_id "
+        "WHERE alert_hits.article_id = ? "
+        "ORDER BY alert_hits.notified_ts DESC, alerts.id DESC LIMIT 1",
+        (article_id_value,),
+    ).fetchone()
+    conn.close()
+
+    alert_query = str(alert["query"]) if alert else ""
+    reason = f'matched your "{alert_query}" alert' if alert_query else "opened from notification"
+    return {
+        "ok": True,
+        "article": {
+            "id": str(row["id"]),
+            "url": str(row["url"]),
+            "title": str(row["title"]),
+            "source": str(row["source"]),
+            "summary": plain_text(row["feed_summary"], 320),
+            "synopsis": plain_text(row["feed_summary"], 1800),
+            "published_ts": int(row["published_ts"]),
+            "age": human_age(int(row["published_ts"]), now),
+            "opened": int(row["opened_count"]) > 0,
+            "bookmarked": bookmarked,
+            "read": read,
+            "dismissed": dismissed,
+            "reason": "subject alert" if alert_query else "notification",
+            "alert_query": alert_query,
+            "trend": 0,
+            "score": 0,
+            "feedback_targets": feedback_targets_for_article(row),
+            "cluster_id": str(row["id"]),
+            "cluster_ids": [str(row["id"])],
+            "coverage_count": 1,
+            "coverage_sources": [str(row["source"])],
+            "related_articles": [],
+            "why": [{"label": reason, "score": 0}],
+            "why_text": reason,
+        },
+    }
+
+
 def record_open(article_id_value: str, signal: str = "open") -> dict[str, Any]:
     if signal not in {"open", "engaged", "external", "summary"}:
         raise ValueError("unsupported reading signal")
@@ -4181,8 +4246,51 @@ def match_new_alerts(
     return hits
 
 
+def alert_notification_command(
+    notifier: str,
+    native_omarchy: bool,
+    shell_client: str,
+    notification_icon: str,
+    headline: str,
+    body: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Build an argv-only notification command with an optional deep link."""
+    if native_omarchy:
+        return [
+            notifier,
+            "--app-name",
+            "PYIN News",
+            "--icon",
+            notification_icon,
+            "--urgency",
+            "normal",
+            "--expire-time",
+            "15000",
+            headline,
+            body,
+            "--exec",
+            shell_client,
+            "shell",
+            "summon",
+            PLUGIN_ID,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        ]
+    return [
+        notifier,
+        "--app-name",
+        "PYIN News",
+        "--icon",
+        notification_icon,
+        headline,
+        body,
+    ]
+
+
 def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
-    notifier = shutil.which("notify-send")
+    omarchy_notifier = shutil.which("omarchy-notification-send")
+    fallback_notifier = shutil.which("notify-send")
+    notifier = omarchy_notifier or fallback_notifier
     if not notifier or not hits:
         return 0
     setup = load_setup_profile()
@@ -4223,19 +4331,21 @@ def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
     notification_icon = (
         str(NOTIFICATION_ICON_PATH) if NOTIFICATION_ICON_PATH.is_file() else "news"
     )
+    shell_client = shutil.which("omarchy-shell") or "omarchy-shell"
+
     visible_hits = hits[: min(6, remaining)]
     for hit in visible_hits:
         try:
             completed = subprocess.run(
-                [
+                alert_notification_command(
                     notifier,
-                    "--app-name",
-                    "PYIN News",
-                    "--icon",
+                    bool(omarchy_notifier),
+                    shell_client,
                     notification_icon,
                     f"News alert: {hit['query']}",
-                    f"{hit['source']}\n{hit['title']}",
-                ],
+                    f"{hit['source']}\n{hit['title']}\nClick to read in PYIN",
+                    {"article_id": str(hit["article_id"])},
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=5,
@@ -4248,15 +4358,15 @@ def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
     if len(hits) > len(visible_hits) and sent < remaining:
         try:
             completed = subprocess.run(
-                [
+                alert_notification_command(
                     notifier,
-                    "--app-name",
-                    "PYIN News",
-                    "--icon",
+                    bool(omarchy_notifier),
+                    shell_client,
                     notification_icon,
                     "More news alerts matched",
-                    f"{len(hits) - len(visible_hits)} additional new stories are in PYIN.",
-                ],
+                    f"{len(hits) - len(visible_hits)} additional new stories matched.\nClick to manage alerts.",
+                    {"view": "alerts"},
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=5,
@@ -5146,6 +5256,11 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--query", required=True)
     search_parser.add_argument("--limit", type=int, default=60)
 
+    article_parser = sub.add_parser(
+        "article", help="Return one cached article for an internal deep link"
+    )
+    article_parser.add_argument("--id", required=True, metavar="ARTICLE_ID")
+
     preferences_parser = sub.add_parser("preferences", help="Read or update persistent topic preferences")
     preferences_parser.add_argument("--set-topics", default=None, help="JSON array of topic values")
 
@@ -5285,6 +5400,8 @@ def main(argv: list[str] | None = None) -> int:
             return emit(bootstrap(args.limit, args.interests))
         if args.command == "search":
             return emit(search_articles(args.query, args.limit))
+        if args.command == "article":
+            return emit(get_article(args.id))
         if args.command == "preferences":
             return emit(preferences(args.set_topics))
         if args.command == "setup":

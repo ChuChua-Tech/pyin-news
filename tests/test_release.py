@@ -155,6 +155,74 @@ class ReleasePackageTests(unittest.TestCase):
             )
         self.assertEqual(captured_headers["User-agent"], "Mozilla/5.0")
 
+    def test_alert_notification_carries_an_argv_only_article_deep_link(self):
+        backend = load_backend()
+        command = backend.alert_notification_command(
+            "/usr/bin/omarchy-notification-send",
+            True,
+            "/usr/bin/omarchy-shell",
+            "/tmp/pyin-news.svg",
+            "News alert: Kamloops",
+            "Example Source\nExample story",
+            {"article_id": "article-123"},
+        )
+
+        exec_index = command.index("--exec")
+        self.assertEqual(
+            command[exec_index + 1:exec_index + 6],
+            [
+                "/usr/bin/omarchy-shell",
+                "shell",
+                "summon",
+                backend.PLUGIN_ID,
+                '{"article_id":"article-123"}',
+            ],
+        )
+        self.assertNotIn("bash", command)
+        self.assertNotIn("sh", command)
+
+    def test_cached_article_endpoint_supports_notification_deep_links(self):
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            backend.CONFIG_DIR = base / "config"
+            backend.STATE_DIR = base / "state"
+            backend.DB_PATH = backend.STATE_DIR / "news.sqlite3"
+            conn = backend.db()
+            with conn:
+                conn.execute(
+                    "INSERT INTO articles "
+                    "(id, url, title, source, feed_summary, published_ts, fetched_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "article-123",
+                        "https://example.com/story",
+                        "A local story",
+                        "Example Source",
+                        "The publisher-provided synopsis.",
+                        1_800_000_000,
+                        1_800_000_001,
+                    ),
+                )
+                cursor = conn.execute(
+                    "INSERT INTO alerts(query, enabled, created_ts) VALUES(?, 1, ?)",
+                    ("Kamloops", 1_800_000_002),
+                )
+                conn.execute(
+                    "INSERT INTO alert_hits(alert_id, article_id, notified_ts) "
+                    "VALUES(?, ?, ?)",
+                    (cursor.lastrowid, "article-123", 1_800_000_003),
+                )
+            conn.close()
+
+            payload = backend.get_article("article-123")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["article"]["id"], "article-123")
+        self.assertEqual(payload["article"]["alert_query"], "Kamloops")
+        self.assertEqual(payload["article"]["synopsis"], "The publisher-provided synopsis.")
+        self.assertEqual(payload["article"]["cluster_ids"], ["article-123"])
+
 
 if __name__ == "__main__":
     unittest.main()

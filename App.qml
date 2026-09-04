@@ -186,6 +186,9 @@ Item {
   property string aiAction: ""
   property string activeArticleId: ""
   property var activeArticle: null
+  property string pendingDeepLinkArticleId: ""
+  property string pendingDeepLinkView: ""
+  property string activeDeepLinkArticleId: ""
   property bool confirmProfileReset: false
   property string profileTransferAction: ""
   property bool actionHudExpanded: false
@@ -350,9 +353,34 @@ Item {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     if (payload.settings) root.settings = payload.settings
+    if (payload.article_id) {
+      root.pendingDeepLinkArticleId = String(payload.article_id)
+      root.pendingDeepLinkView = ""
+    } else if (String(payload.view || "") === "alerts") {
+      root.pendingDeepLinkArticleId = ""
+      root.pendingDeepLinkView = "alerts"
+    }
     root.closingFromHost = false
     root.opened = true
     root.loadBootstrap()
+  }
+
+  function fulfillDeepLink() {
+    if (root.pendingDeepLinkArticleId !== "") {
+      if (deepLinkArticleProc.running) return
+      root.activeDeepLinkArticleId = root.pendingDeepLinkArticleId
+      root.pendingDeepLinkArticleId = ""
+      root.statusText = "Opening alert story…"
+      deepLinkArticleProc.command = [
+        root.backendPath, "article", "--id", root.activeDeepLinkArticleId
+      ]
+      deepLinkArticleProc.running = true
+      return
+    }
+    if (root.pendingDeepLinkView === "alerts") {
+      root.pendingDeepLinkView = ""
+      root.showAlerts()
+    }
   }
 
   function loadApplicationData() {
@@ -516,7 +544,12 @@ Item {
       after: root.lastFeedAfterIds,
       mutation_revision: root.feedMutationRevision,
       load_running: loadProc.running,
-      pending_reason: root.pendingFeedLoadReason
+      pending_reason: root.pendingFeedLoadReason,
+      view: root.viewMode,
+      active_article_id: root.activeArticleId,
+      pending_deep_link_id: root.pendingDeepLinkArticleId,
+      active_deep_link_id: root.activeDeepLinkArticleId,
+      deep_link_running: deepLinkArticleProc.running
     })
   }
 
@@ -2009,7 +2042,30 @@ Item {
           }, false, "bootstrap")
         } else root.loadFeed(true, "bootstrap-stale")
         Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        Qt.callLater(function() { root.fulfillDeepLink() })
       }
+    }
+  }
+
+  Process {
+    id: deepLinkArticleProc
+    stdout: StdioCollector { id: deepLinkArticleStdout; waitForEnd: true }
+    stderr: StdioCollector { id: deepLinkArticleStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parsePayload(deepLinkArticleStdout.text,
+        String(deepLinkArticleStderr.text || "Could not open that alert story"))
+      root.activeDeepLinkArticleId = ""
+      if (!payload.ok || !payload.article) {
+        root.statusText = payload.error
+          ? "Alert story unavailable · " + String(payload.error)
+          : "That alert story is no longer in local storage"
+      } else {
+        root.returnViewMode = "feed"
+        root.showArticle(payload.article)
+        root.statusText = "Opened from subject alert · stored locally"
+      }
+      if (!bootstrapProc.running && root.pendingDeepLinkArticleId !== "")
+        Qt.callLater(function() { root.fulfillDeepLink() })
     }
   }
 
@@ -4236,7 +4292,7 @@ Item {
               anchors.top: alertsTitle.bottom
               anchors.topMargin: Style.spacing.sm
               textFormat: Text.PlainText
-              text: "Get an Omarchy notification when a newly fetched story matches all significant words. Matching is local and does not invoke AI."
+              text: "Get an Omarchy notification when a newly fetched story matches all significant words. Click an individual alert to open that exact story in PYIN. Matching is local and does not invoke AI."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall

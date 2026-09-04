@@ -30,7 +30,8 @@ panel is opened; it can be reopened later with `c` or from Profile.
 - A current Omarchy installation with shell-plugin support
 - Python 3 with its standard-library SQLite support (included with Omarchy)
 - Network access to the RSS/Atom and article hosts the reader checks
-- Optional: `notify-send` for subject-alert desktop notifications
+- Subject alerts use Omarchy's native notification sender; `notify-send` is a
+  non-clickable compatibility fallback when that helper is unavailable
 - Optional: Codex for System AI, or a loopback OpenAI-compatible server for
   Local server mode; the news reader remains fully usable with No AI
 
@@ -116,7 +117,9 @@ nothing is transmitted until the reader reviews and sends that draft.
 
 Subject-alert notifications use PYIN's bundled split-flap icon rather than the
 desktop theme's generic news tile. The asset stays inside the plugin and is
-resolved by absolute path, so it survives theme and icon-pack changes.
+resolved by absolute path, so it survives theme and icon-pack changes. Clicking
+an individual alert summons PYIN and opens that exact cached story, including
+from Omarchy's persisted notification history.
 
 While the feed is idle, the four mechanical cells occasionally flip from
 `PYIN` to `NEWS`, hold briefly, and return. This can be disabled with the
