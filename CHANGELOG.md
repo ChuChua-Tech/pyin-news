@@ -5,14 +5,25 @@ Versioning.
 
 ## Unreleased
 
+## [0.19.0] - 2026-09-04
+
 ### Added
 
+- A manual App & Updates profile section that identifies stable, development,
+  modified, and packaged copies before delegating confirmed installations to
+  Omarchy's validated, rollback-capable native updater
 - Clickable Omarchy subject-alert notifications that summon PYIN and open the
   exact cached story, with persisted deep links in notification history
 - First-class Sports, Gaming, and Omarchy topics backed by 26 fetched and
   parser-verified feeds, bringing the bundled catalog to 226 sources
 - Geography-neutral setup topics: local and national relevance now comes only
   from each reader's optional country, region, and city profile
+
+### Fixed
+
+- Location alerts now match each article's title and publisher synopsis rather
+  than static source geography, preventing every story from a local publisher
+  from triggering the same city alert
 
 ## [0.18.0] - 2026-09-04
 
@@ -31,4 +42,5 @@ Initial public release.
 - Feed compatibility for publishers that reject explicit compression or emit
   isolated legacy bytes in otherwise valid UTF-8 XML
 
+[0.19.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.19.0
 [0.18.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.18.0

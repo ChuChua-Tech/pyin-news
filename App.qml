@@ -110,6 +110,11 @@ Item {
   property int historyCount: 0
   property int readCount: 0
   property var profileData: ({})
+  property var applicationUpdateData: ({})
+  property bool applicationUpdateCheckRemote: false
+  property bool applicationUpdateLaunching: false
+  property int applicationUpdateStartedTs: 0
+  property int applicationUpdatePolls: 0
   property var learnedArticles: ({})
   property int selectedIndex: 0
   property int savedIndex: 0
@@ -307,6 +312,7 @@ Item {
     { option: "EXTRA INTEREST KEYWORDS", effect: "Adds explicit keyword boosts beyond the setup topic catalog." },
     { option: "LEARNING", effect: "When off, no new reading signals are recorded and existing inferred memory stops affecting ranking." },
     { option: "RETENTION", effect: "Controls how long ordinary cached articles and local learning history are kept. Saved stories are exempt." },
+    { option: "APP UPDATES", effect: "Checks the stable Git branch only when requested. Installation requires confirmation and delegates validation, rollback, and reload to Omarchy; it never changes your local news data." },
     { option: "PERSONALIZED RANKING", effect: "One local engine combines setup choices, explicit interests, reading memory, freshness, diversity, and discovery. AI never chooses the feed order." },
     { option: "BACK ACTION", effect: "Either returns immediately and marks the article read, or returns while leaving it available. Mark Read itself stays neutral." },
     { option: "SEARCH NEWS", effect: "Searches all locally cached stories without AI, ranking personalization, blacklist filtering, or read-state filtering." },
@@ -1115,11 +1121,33 @@ Item {
     profileProc.running = true
   }
 
+  function loadApplicationUpdateStatus(checkRemote) {
+    if (updateStatusProc.running) return
+    root.applicationUpdateCheckRemote = Boolean(checkRemote)
+    var command = [root.backendPath, "updates"]
+    if (checkRemote) command.push("--check")
+    updateStatusProc.command = command
+    updateStatusProc.running = true
+    if (checkRemote) root.statusText = "Checking the stable PYIN release…"
+  }
+
+  function installApplicationUpdate() {
+    if (root.applicationUpdateLaunching
+        || !Boolean(root.applicationUpdateData.can_install)) return
+    root.applicationUpdateLaunching = true
+    root.applicationUpdateStartedTs = Math.floor(Date.now() / 1000)
+    root.applicationUpdatePolls = 0
+    profilePage.confirmUpdate = false
+    root.statusText = "Updating through Omarchy · PYIN will reload when verified"
+    Quickshell.execDetached([root.backendPath, "updates", "--install"])
+  }
+
   function showProfile() {
     root.confirmProfileReset = false
     root.viewMode = "profile"
     profilePage.resetSections()
     root.loadProfile()
+    root.loadApplicationUpdateStatus(false)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2555,6 +2583,31 @@ Item {
   }
 
   Process {
+    id: updateStatusProc
+    stdout: StdioCollector { id: updateStatusStdout; waitForEnd: true }
+    stderr: StdioCollector { id: updateStatusStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parsePayload(updateStatusStdout.text,
+        String(updateStatusStderr.text || "Could not inspect app updates"))
+      if (!payload.ok) {
+        root.statusText = payload.error || "Could not inspect app updates"
+        root.applicationUpdateCheckRemote = false
+        return
+      }
+      root.applicationUpdateData = payload
+      var lastResult = payload.last_result || ({})
+      if (root.applicationUpdateLaunching
+          && Number(lastResult.finished_ts || 0) >= root.applicationUpdateStartedTs) {
+        root.applicationUpdateLaunching = false
+        root.statusText = String(lastResult.summary || "Update finished")
+      } else if (root.applicationUpdateCheckRemote) {
+        root.statusText = String(payload.summary || "Update check finished")
+      }
+      root.applicationUpdateCheckRemote = false
+    }
+  }
+
+  Process {
     id: profileResetProc
     stdout: StdioCollector { id: profileResetStdout; waitForEnd: true }
     stderr: StdioCollector { id: profileResetStderr; waitForEnd: true }
@@ -2617,6 +2670,21 @@ Item {
     onTriggered: {
       root.refreshOutcomeText = ""
       root.refreshOutcomeDetail = ""
+    }
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.applicationUpdateLaunching
+    onTriggered: {
+      root.applicationUpdatePolls++
+      if (root.applicationUpdatePolls >= 90) {
+        root.applicationUpdateLaunching = false
+        root.statusText = "Update is taking longer than expected · check again from Profile"
+      } else if (!updateStatusProc.running) {
+        root.loadApplicationUpdateStatus(false)
+      }
     }
   }
 
@@ -4449,6 +4517,7 @@ Item {
             counts: root.profileCounts
             storage: root.profileStorage
             exposure: root.profileExposure
+            updateData: root.applicationUpdateData
             showLessTermText: root.showLessTermSummary()
             showLessSourceText: root.showLessSourceSummary()
             profileBusy: profileProc.running
@@ -4459,6 +4528,8 @@ Item {
             interestBusy: interestProc.running
             transferBusy: profileTransferProc.running
             resetBusy: profileResetProc.running
+            updateBusy: updateStatusProc.running
+            updateLaunching: root.applicationUpdateLaunching
             confirmReset: root.confirmProfileReset
 
             onDestinationRequested: function(destination) {
@@ -4485,6 +4556,8 @@ Item {
             onExportRequested: root.exportProfile()
             onImportRequested: root.importProfile()
             onResetRequested: root.resetProfileLearning()
+            onUpdateCheckRequested: root.loadApplicationUpdateStatus(true)
+            onUpdateInstallRequested: root.installApplicationUpdate()
           }
 
           Flickable {

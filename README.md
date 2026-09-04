@@ -41,6 +41,14 @@ helper process run unsandboxed with the permissions of the signed-in user.
 
 ## Update
 
+Profile → App & Updates can identify the installed version and channel, check
+the stable branch on demand, and install a release after a second confirmation.
+It delegates installation, validation, rollback, and shell reload to Omarchy.
+Checks are never automatic, development and modified checkouts are protected,
+and user data remains outside the plugin folder.
+
+The equivalent terminal command is:
+
 ```bash
 omarchy plugin update tech.chuchua.news
 ```
@@ -348,7 +356,7 @@ and legacy open counts, while leaving dismissed stories hidden and keeping
 explicit interest-graph choices until they are individually removed.
 
 The Profile page is the control centre for topic choices, menu layout, article
-behaviour, AI speed, source setup, and local data. Its four primary groups and
+behaviour, AI speed, source setup, app updates, and local data. Its five primary groups and
 nested Setup & Source Mix and Show Less sections start collapsed, keeping
 everyday controls compact. Its Back-action switch chooses whether
 Back/Escape means “finished—mark read and hide” or simply returns without
@@ -362,7 +370,9 @@ optional footer link—and explicit interest nodes through
 `~/Downloads/chuchua-news-profile.json`.
 
 Subject alerts match all significant words locally against each newly fetched
-title, feed synopsis, and source topics. For example, `war in Iran` watches for
+title and publisher-provided feed synopsis. Static publisher topics and
+geography are deliberately excluded, so a `Kamloops`-tagged source does not
+trigger unless that story mentions Kamloops. For example, `war in Iran` watches for
 new items matching both `war` and `Iran`. Matches produce Omarchy desktop
 notifications and are de-duplicated per article. Alerts do not scan old cached
 items and never invoke AI.

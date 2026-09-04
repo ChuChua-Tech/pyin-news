@@ -38,7 +38,9 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertTrue((ROOT / "README.md").is_file())
         self.assertTrue((ROOT / "preview.png").is_file())
         backend = (ROOT / "bin" / "chuchua-news").read_text(encoding="utf-8")
+        backend_module = load_backend()
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertEqual(backend_module.APP_VERSION, manifest["version"])
         self.assertIn(f"pyin-news/{manifest['version']}", backend)
         self.assertIn(f"## [{manifest['version']}]", changelog)
         for entry_point in manifest["entryPoints"].values():
@@ -237,6 +239,122 @@ class ReleasePackageTests(unittest.TestCase):
         )
         self.assertNotIn("bash", command)
         self.assertNotIn("sh", command)
+
+    def test_alerts_match_story_text_not_static_source_geography(self):
+        backend = load_backend()
+        source_tag_only = {
+            "title": "Vehicle fire caused an explosion",
+            "feed_summary": "Crews responded early Tuesday morning.",
+            "source_topics": json.dumps(["Kamloops", "British Columbia"]),
+        }
+        title_match = {
+            **source_tag_only,
+            "title": "Kamloops vehicle fire caused an explosion",
+        }
+        synopsis_match = {
+            **source_tag_only,
+            "feed_summary": "The investigation continues in Kamloops.",
+        }
+
+        self.assertFalse(backend.alert_matches("Kamloops", source_tag_only))
+        self.assertTrue(backend.alert_matches("Kamloops", title_match))
+        self.assertTrue(backend.alert_matches("Kamloops", synopsis_match))
+        self.assertTrue(backend.alert_matches(
+            "war in Iran",
+            {"title": "Iranian officials discuss war", "feed_summary": ""},
+        ))
+
+    def test_update_status_protects_development_and_finds_stable_fast_forwards(self):
+        backend = load_backend()
+
+        def completed(arguments, returncode=0, stdout=""):
+            return subprocess.CompletedProcess(arguments, returncode, stdout, "")
+
+        def development_git(*arguments, **_kwargs):
+            key = tuple(arguments)
+            responses = {
+                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="develop\n"),
+                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
+                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
+            }
+            return responses[key]
+
+        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(backend, "run_plugin_git", side_effect=development_git), \
+                mock.patch.object(backend, "recent_update_result", return_value={}):
+            protected = backend.application_update_status(check_remote=True)
+
+        self.assertEqual(protected["state"], "development")
+        self.assertFalse(protected["can_check"])
+        self.assertFalse(protected["can_install"])
+
+        def stable_git(*arguments, **_kwargs):
+            key = tuple(arguments)
+            responses = {
+                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="main\n"),
+                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
+                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
+                ("fetch", "--quiet", "origin", "HEAD"): completed(arguments),
+                ("rev-parse", "FETCH_HEAD"): completed(arguments, stdout="b" * 40 + "\n"),
+                ("show", "FETCH_HEAD:manifest.json"): completed(
+                    arguments, stdout=json.dumps({"version": "0.20.0"})
+                ),
+                ("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"): completed(arguments),
+            }
+            return responses[key]
+
+        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(backend, "run_plugin_git", side_effect=stable_git), \
+                mock.patch.object(backend, "recent_update_result", return_value={}):
+            available = backend.application_update_status(check_remote=True)
+
+        self.assertEqual(available["state"], "available")
+        self.assertEqual(available["target_version"], "0.20.0")
+        self.assertTrue(available["can_install"])
+
+    def test_update_install_delegates_to_omarchy_after_safe_check(self):
+        backend = load_backend()
+        update_status = {
+            "ok": True,
+            "state": "available",
+            "update_available": True,
+            "can_install": True,
+        }
+        completed = subprocess.CompletedProcess([], 0, "Updated tech.chuchua.news.\n", "")
+
+        with mock.patch.object(
+            backend, "application_update_status", return_value=update_status
+        ), mock.patch.object(
+            backend.shutil, "which", return_value="/usr/bin/omarchy"
+        ), mock.patch.object(
+            backend.subprocess, "run", return_value=completed
+        ) as run, mock.patch.object(
+            backend, "plugin_manifest_version", return_value="0.19.0"
+        ), mock.patch.object(
+            backend, "write_json_atomic"
+        ) as write_result, mock.patch.object(backend, "notify_update_result"):
+            payload = backend.install_application_update()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["state"], "installed")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/omarchy", "plugin", "update", backend.PLUGIN_ID, "--yes"],
+        )
+        write_result.assert_called_once()
+
+    def test_profile_exposes_manual_confirmed_native_updates(self):
+        profile_qml = (ROOT / "ProfilePage.qml").read_text(encoding="utf-8")
+        app_qml = (ROOT / "App.qml").read_text(encoding="utf-8")
+
+        self.assertIn("APP & UPDATES", profile_qml)
+        self.assertIn("Check for updates", profile_qml)
+        self.assertIn("Confirm update", profile_qml)
+        self.assertIn('[root.backendPath, "updates", "--install"]', app_qml)
+        self.assertIn("Quickshell.execDetached", app_qml)
 
     def test_cached_article_endpoint_supports_notification_deep_links(self):
         backend = load_backend()
