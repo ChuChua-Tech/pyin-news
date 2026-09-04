@@ -114,7 +114,7 @@ Item {
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: "Your news. Your choices. Less noise."
+        text: "Get the news. Keep your time."
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -136,7 +136,7 @@ Item {
 
       AboutSection {
         heading: "WHY WE CREATED IT"
-        copy: "We wanted a clean way to follow important reporting without bot-filled replies, rage bait, trash posting, or an opaque global platform deciding what deserves our attention. PYIN starts with published RSS reporting, then gives you direct control over topics, sources, alerts, blocked words, and what it learns from you."
+        copy: "Every social platform is built to turn one headline into another hour: bot-filled replies, rage bait, trash posting, arguments, popularity contests, and an opaque global platform deciding what deserves attention. PYIN is just the news. Choose the sources and subjects that matter, reach the end, and get on with your day."
       }
 
       Column {
@@ -157,6 +157,7 @@ Item {
         Repeater {
           model: [
             "NO SOCIAL FEED  //  reporting instead of replies and popularity contests",
+            "FINITE BY DESIGN  //  reach the end, close the app, and keep your time",
             "VISIBLE CURATION  //  inspect and change the profile shaping your feed",
             "LOCAL BY DEFAULT  //  reading signals and preferences remain on this device",
             "AI ONLY ON REQUEST  //  source-bounded summaries, never automatic rewriting",

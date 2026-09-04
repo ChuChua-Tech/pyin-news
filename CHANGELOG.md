@@ -17,5 +17,7 @@ Initial public release.
 - Feed-provided synopses and optional streaming AI TL;DRs with journalistic guardrails
 - System AI presets, a loopback local-server option, and a complete No AI mode
 - Event clustering, stable feed ordering, adaptive source backoff, and source diagnostics
+- Feed compatibility for publishers that reject explicit compression or emit
+  isolated legacy bytes in otherwise valid UTF-8 XML
 
 [0.18.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.18.0

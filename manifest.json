@@ -6,7 +6,7 @@
   "author": "chuchua.tech",
   "license": "MIT",
   "homepage": "https://chuchua.tech",
-  "description": "PYIN is a private, keyboard-first news reader with persistent navigation, local reading history, an editable interest graph, transparent ranking, 200 RSS feeds, alerts, and selectable source-bounded AI.",
+  "description": "Get the news. Keep your time. PYIN is a private, finite Omarchy reader with no bot replies, rage bait, popularity contests, or infinite scroll—just reporting you choose, transparent local curation, and optional on-demand AI.",
   "kinds": [
     "bar-widget",
     "panel"
@@ -18,7 +18,7 @@
   },
   "barWidget": {
     "displayName": "PYIN News",
-    "description": "Curated RSS news, model-free catalog search, an explainable local profile, source controls, instant synopses, saves, alerts, and optional AI.",
+    "description": "News without the social feed: a finite, private edition with transparent local curation, search, saves, alerts, and optional on-demand AI.",
     "category": "Info",
     "aliases": [
       "news",

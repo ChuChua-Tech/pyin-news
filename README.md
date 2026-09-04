@@ -1,11 +1,18 @@
 # PYIN News
 
-A private, keyboard-first, tiled news reader for Omarchy. It ships with a
-catalog of 200 RSS/Atom feeds, groups repeated coverage into events, and ranks
-those events locally using explicit choices plus optional short- and long-term
-memory. AI runs only when you explicitly request it.
+**Get the news. Keep your time.**
 
-![PYIN News feed running as a tiled Omarchy application](preview.png)
+Every social feed wants another hour from you. PYIN does not. There are no bot
+replies, rage-bait arguments, popularity contests, or infinite scroll. Choose
+the reporting and subjects that matter, read a finite edition with a beginning
+and an end, then get on with your day.
+
+PYIN is a private, keyboard-first, tiled news reader for Omarchy. It ships with
+a catalog of 200 RSS/Atom feeds, groups repeated coverage into events, and
+ranks those events locally using choices you can inspect and change. AI runs
+only when you explicitly request it.
+
+![PYIN News vision page running as a tiled Omarchy application](preview.png)
 
 ## Install
 
@@ -61,9 +68,9 @@ opening or summarizing a story can also fetch that publisher's article page.
 AI never ranks the feed and runs only after an explicit TL;DR or question. In
 System AI mode, the supplied article text is sent to the configured Codex
 model. In Local server mode, it is sent only to the configured loopback
-endpoint. No AI mode does not send article text to any model. The feedback form
-opens a local pre-addressed email draft and sends nothing until the user
-chooses to send it.
+endpoint. With No AI selected, article text is not sent to any model. The
+feedback form opens a local pre-addressed email draft and sends nothing until
+the user chooses to send it.
 
 ## Controls
 

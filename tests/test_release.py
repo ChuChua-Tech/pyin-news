@@ -1,4 +1,6 @@
 import json
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 import os
 from pathlib import Path
 import subprocess
@@ -6,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from urllib.parse import urlparse
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_json(name):
     with (ROOT / name).open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_backend():
+    loader = SourceFileLoader("pyin_release_backend", str(ROOT / "bin" / "chuchua-news"))
+    spec = spec_from_loader(loader.name, loader)
+    module = module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -92,6 +103,57 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(report["sources"], 200)
             self.assertEqual(report["catalog_sources"], 200)
             self.assertFalse(report["setup_complete"])
+
+    def test_feed_parser_repairs_an_isolated_legacy_byte(self):
+        backend = load_backend()
+        raw = (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<rss><channel><item><title><![CDATA[Legacy\xa0space]]></title>'
+            b'<link>https://example.com/story</link>'
+            b'<description>Test</description></item></channel></rss>'
+        )
+        articles = backend.parse_feed(
+            {"name": "Encoding Test", "topics": ["test"]}, raw, 1_800_000_000
+        )
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(articles[0]["url"], "https://example.com/story")
+
+    def test_feed_request_does_not_force_compression(self):
+        backend = load_backend()
+        captured_headers = {}
+
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size):
+                return b"<rss><channel /></rss>"
+
+        def fake_urlopen(request, timeout):
+            self.assertGreater(timeout, 0)
+            captured_headers.update(dict(request.header_items()))
+            return Response()
+
+        with mock.patch.object(backend.urllib.request, "urlopen", fake_urlopen):
+            body, _validators = backend.http_get_conditional(
+                "https://example.com/feed", 1024
+            )
+
+        self.assertEqual(body, b"<rss><channel /></rss>")
+        self.assertNotIn("Accept-encoding", captured_headers)
+        self.assertEqual(captured_headers["User-agent"], backend.USER_AGENT)
+
+        captured_headers.clear()
+        with mock.patch.object(backend.urllib.request, "urlopen", fake_urlopen):
+            backend.http_get_conditional(
+                "https://www.cbc.ca/webfeed/rss/rss-topstories", 1024
+            )
+        self.assertEqual(captured_headers["User-agent"], "Mozilla/5.0")
 
 
 if __name__ == "__main__":

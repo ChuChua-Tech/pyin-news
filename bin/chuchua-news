@@ -45,6 +45,12 @@ SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
 USER_AGENT = "pyin-news/0.18.0 (+https://chuchua.tech)"
+USER_AGENT_OVERRIDES = {
+    # CBC's RSS gateway currently stalls requests carrying an application
+    # user-agent while returning the same public XML immediately to this
+    # minimal compatibility value.
+    "www.cbc.ca": "Mozilla/5.0",
+}
 SUMMARY_PROMPT_VERSION = "journalistic-v1"
 FETCH_TIMEOUT = 14
 MAX_FEED_BYTES = 4 * 1024 * 1024
@@ -611,10 +617,10 @@ def http_get_conditional(
     etag: str = "",
     last_modified: str = "",
 ) -> tuple[bytes | None, dict[str, str]]:
+    host = urllib.parse.urlsplit(url).netloc.casefold()
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": USER_AGENT_OVERRIDES.get(host, USER_AGENT),
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8",
-        "Accept-Encoding": "gzip",
     }
     if etag:
         headers["If-None-Match"] = etag
@@ -653,7 +659,16 @@ def parse_feed(source: dict[str, Any], raw: bytes, now: int) -> list[dict[str, A
     raw = raw.lstrip()
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:].lstrip()
-    root = ET.fromstring(raw)
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        # Some otherwise useful feeds declare UTF-8 but occasionally emit a
+        # stray legacy byte or an XML-forbidden control character. Keep the
+        # strict parser as the normal path, then repair only encoding damage;
+        # genuinely malformed markup still fails on the second parse.
+        repaired = raw.decode("utf-8", errors="replace")
+        repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", repaired)
+        root = ET.fromstring(repaired.encode("utf-8"))
     root_kind = local_name(root.tag)
     if root_kind in {"rss", "rdf"}:
         entries = [item for item in root.iter() if local_name(item.tag) == "item"]
