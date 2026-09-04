@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">PYIN News</title>
+  <desc id="desc">Four-cell split-flap PYIN news mark</desc>
+  <rect x="4" y="4" width="120" height="120" rx="23" fill="#11131c"/>
+  <rect x="5.5" y="5.5" width="117" height="117" rx="21.5" fill="none" stroke="#f4f6fb" stroke-opacity="0.32" stroke-width="3"/>
+  <g fill="#181c29" stroke="#82aaff" stroke-width="2">
+    <rect x="12" y="27" width="24" height="64" rx="5"/>
+    <rect x="39" y="27" width="24" height="64" rx="5"/>
+    <rect x="66" y="27" width="24" height="64" rx="5"/>
+    <rect x="93" y="27" width="24" height="64" rx="5"/>
+  </g>
+  <g fill="#f4f6fb" font-family="DejaVu Sans Mono, monospace" font-size="25" font-weight="700" text-anchor="middle">
+    <text x="24" y="68">P</text>
+    <text x="51" y="68">Y</text>
+    <text x="78" y="68">I</text>
+    <text x="105" y="68">N</text>
+  </g>
+  <g stroke="#11131c" stroke-width="3">
+    <line x1="13" y1="59" x2="35" y2="59"/>
+    <line x1="40" y1="59" x2="62" y2="59"/>
+    <line x1="67" y1="59" x2="89" y2="59"/>
+    <line x1="94" y1="59" x2="116" y2="59"/>
+  </g>
+  <text x="64" y="108" fill="#82aaff" font-family="DejaVu Sans Mono, monospace" font-size="10" font-weight="700" letter-spacing="3" text-anchor="middle">NEWS</text>
+</svg>

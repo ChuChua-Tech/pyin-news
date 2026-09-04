@@ -1,0 +1,422 @@
+[
+  {
+    "name": "The Tyee",
+    "url": "https://thetyee.ca/rss2.xml",
+    "topics": ["Canada", "British Columbia", "politics", "culture"]
+  },
+  {
+    "name": "The Narwhal",
+    "url": "https://thenarwhal.ca/feed/",
+    "topics": ["Canada", "environment", "climate", "energy"]
+  },
+  {
+    "name": "ProPublica",
+    "url": "https://www.propublica.org/feeds/propublica/main",
+    "topics": ["investigations", "accountability", "politics"]
+  },
+  {
+    "name": "Bellingcat",
+    "url": "https://www.bellingcat.com/feed/",
+    "topics": ["investigations", "open source intelligence", "world"]
+  },
+  {
+    "name": "Rest of World",
+    "url": "https://restofworld.org/feed/latest/",
+    "topics": ["technology", "world", "society"]
+  },
+  {
+    "name": "404 Media",
+    "url": "https://www.404media.co/rss/",
+    "topics": ["technology", "privacy", "internet"]
+  },
+  {
+    "name": "Krebs on Security",
+    "url": "https://krebsonsecurity.com/feed/",
+    "topics": ["cybersecurity", "privacy", "crime"]
+  },
+  {
+    "name": "Quanta Magazine",
+    "url": "https://www.quantamagazine.org/feed/",
+    "topics": ["science", "mathematics", "physics", "biology"]
+  },
+  {
+    "name": "The Conversation Canada",
+    "url": "https://theconversation.com/ca/articles.atom",
+    "topics": ["Canada", "science", "health", "politics", "society"]
+  },
+  {
+    "name": "Global Voices",
+    "url": "https://globalvoices.org/feed/",
+    "topics": ["world", "human rights", "culture", "society"]
+  },
+  {
+    "name": "Techdirt",
+    "url": "https://www.techdirt.com/feed/",
+    "topics": ["technology", "internet", "privacy", "policy"]
+  },
+  {
+    "name": "Inside Climate News",
+    "url": "https://insideclimatenews.org/feed/",
+    "topics": ["climate", "environment", "energy", "investigations"]
+  },
+  {
+    "name": "Undark",
+    "url": "https://undark.org/feed/",
+    "topics": ["science", "health", "environment", "society"]
+  },
+  {
+    "name": "Policy Options",
+    "url": "https://policyoptions.irpp.org/feed/",
+    "topics": ["Canada", "politics", "policy", "business"]
+  },
+  {
+    "name": "The Marshall Project",
+    "url": "https://www.themarshallproject.org/rss/recent",
+    "topics": ["justice", "investigations", "accountability", "United States"]
+  },
+  {
+    "name": "Carbon Brief",
+    "url": "https://www.carbonbrief.org/feed/",
+    "topics": ["climate", "energy", "science", "policy"]
+  },
+  {
+    "name": "Democracy Now!",
+    "url": "https://www.democracynow.org/democracynow.rss",
+    "topics": ["world", "politics", "human rights", "justice"]
+  },
+  {
+    "name": "Schneier on Security",
+    "url": "https://www.schneier.com/feed/atom/",
+    "topics": ["cybersecurity", "privacy", "technology", "policy"]
+  },
+  {
+    "name": "Grist",
+    "url": "https://grist.org/feed/",
+    "topics": ["climate", "environment", "energy", "culture"]
+  },
+  {
+    "name": "The Walrus",
+    "url": "https://thewalrus.ca/feed/",
+    "topics": ["Canada", "culture", "politics", "society"]
+  },
+  {
+    "name": "The Hub",
+    "url": "https://thehub.ca/feed/",
+    "topics": ["Canada", "politics", "business", "policy"]
+  },
+  {
+    "name": "The Discourse",
+    "url": "https://thediscourse.ca/feed",
+    "topics": ["Canada", "communities", "justice", "society"]
+  },
+  {
+    "name": "The Maple",
+    "url": "https://www.readthemaple.com/rss/",
+    "topics": ["Canada", "politics", "labour", "business"]
+  },
+  {
+    "name": "ICIJ",
+    "url": "https://www.icij.org/feed/",
+    "topics": ["investigations", "world", "accountability", "business"]
+  },
+  {
+    "name": "OCCRP",
+    "url": "https://www.occrp.org/en/feed",
+    "topics": ["investigations", "world", "crime", "accountability"]
+  },
+  {
+    "name": "The New Humanitarian",
+    "url": "https://www.thenewhumanitarian.org/rss.xml",
+    "topics": ["world", "human rights", "conflict", "health"]
+  },
+  {
+    "name": "openDemocracy",
+    "url": "https://www.opendemocracy.net/en/feed/",
+    "topics": ["world", "politics", "human rights", "investigations"]
+  },
+  {
+    "name": "Responsible Statecraft",
+    "url": "https://responsiblestatecraft.org/feed/",
+    "topics": ["world", "politics", "conflict", "policy"]
+  },
+  {
+    "name": "+972 Magazine",
+    "url": "https://www.972mag.com/feed/",
+    "topics": ["world", "Middle East", "human rights", "conflict"]
+  },
+  {
+    "name": "Meduza English",
+    "url": "https://meduza.io/rss/en/all",
+    "topics": ["world", "Russia", "Ukraine", "politics"]
+  },
+  {
+    "name": "Africa Is a Country",
+    "url": "https://africasacountry.com/feed",
+    "topics": ["world", "Africa", "politics", "culture"]
+  },
+  {
+    "name": "Mongabay",
+    "url": "https://news.mongabay.com/feed/",
+    "topics": ["world", "environment", "climate", "science"]
+  },
+  {
+    "name": "LWN.net",
+    "url": "https://lwn.net/headlines/rss",
+    "topics": ["technology", "Linux", "open source", "cybersecurity"]
+  },
+  {
+    "name": "The Register",
+    "url": "https://www.theregister.com/headlines.atom",
+    "topics": ["technology", "cybersecurity", "business", "science"]
+  },
+  {
+    "name": "Citizen Lab",
+    "url": "https://citizenlab.ca/feed/",
+    "topics": ["cybersecurity", "privacy", "human rights", "investigations"]
+  },
+  {
+    "name": "Electronic Frontier Foundation",
+    "url": "https://www.eff.org/rss/updates.xml",
+    "topics": ["technology", "privacy", "internet", "policy"]
+  },
+  {
+    "name": "Freedom of the Press Foundation",
+    "url": "https://freedom.press/news/feed/",
+    "topics": ["press freedom", "privacy", "cybersecurity", "politics"]
+  },
+  {
+    "name": "Lobsters",
+    "url": "https://lobste.rs/rss",
+    "topics": ["technology", "programming", "open source", "community"]
+  },
+  {
+    "name": "OSNews",
+    "url": "https://www.osnews.com/feed/",
+    "topics": ["technology", "operating systems", "open source"]
+  },
+  {
+    "name": "Phoronix",
+    "url": "https://www.phoronix.com/rss.php",
+    "topics": ["technology", "Linux", "hardware", "open source"]
+  },
+  {
+    "name": "It's FOSS",
+    "url": "https://itsfoss.com/rss/",
+    "topics": ["technology", "Linux", "open source"]
+  },
+  {
+    "name": "Knowable Magazine",
+    "url": "https://knowablemagazine.org/rss",
+    "topics": ["science", "health", "environment", "society"]
+  },
+  {
+    "name": "KFF Health News",
+    "url": "https://kffhealthnews.org/feed/",
+    "topics": ["health", "policy", "investigations", "United States"]
+  },
+  {
+    "name": "Yale Climate Connections",
+    "url": "https://yaleclimateconnections.org/feed/",
+    "topics": ["climate", "science", "environment", "energy"]
+  },
+  {
+    "name": "Retraction Watch",
+    "url": "https://retractionwatch.com/feed/",
+    "topics": ["science", "health", "accountability", "research"]
+  },
+  {
+    "name": "SAPIENS",
+    "url": "https://www.sapiens.org/feed/",
+    "topics": ["science", "culture", "history", "society"]
+  },
+  {
+    "name": "JSTOR Daily",
+    "url": "https://daily.jstor.org/feed/",
+    "topics": ["science", "history", "culture", "society"]
+  },
+  {
+    "name": "The Lever",
+    "url": "https://www.levernews.com/rss/",
+    "topics": ["business", "politics", "labour", "investigations"]
+  },
+  {
+    "name": "Labor Notes",
+    "url": "https://labornotes.org/rss.xml",
+    "topics": ["labour", "business", "politics", "society"]
+  },
+  {
+    "name": "Hyperallergic",
+    "url": "https://hyperallergic.com/feed/",
+    "topics": ["culture", "arts", "politics", "society"]
+  },
+  {
+    "name": "The Public Domain Review",
+    "url": "https://publicdomainreview.org/rss.xml",
+    "topics": ["culture", "history", "arts", "science"]
+  },
+  {
+    "name": "Aeon",
+    "url": "https://aeon.co/feed.rss",
+    "topics": ["culture", "science", "philosophy", "society"]
+  },
+  {
+    "name": "Reason",
+    "url": "https://reason.com/feed/",
+    "topics": ["politics", "policy", "business", "civil liberties"]
+  },
+  {
+    "name": "The Bulwark",
+    "url": "https://www.thebulwark.com/feed/",
+    "topics": ["politics", "United States", "culture", "policy"]
+  },
+  {
+    "name": "CalMatters",
+    "url": "https://calmatters.org/feed/",
+    "topics": ["United States", "politics", "climate", "justice"]
+  },
+  {"name": "CBC News", "url": "https://www.cbc.ca/webfeed/rss/rss-topstories", "topics": ["Canada", "world", "politics", "business", "culture"]},
+  {"name": "CBC British Columbia", "url": "https://www.cbc.ca/webfeed/rss/rss-canada-britishcolumbia", "topics": ["Canada", "British Columbia", "politics", "communities", "culture"]},
+  {"name": "CBC Indigenous", "url": "https://www.cbc.ca/webfeed/rss/rss-Indigenous", "topics": ["Canada", "Indigenous", "communities", "politics", "culture"]},
+  {"name": "APTN News", "url": "https://www.aptnnews.ca/feed/", "topics": ["Canada", "Indigenous", "politics", "justice", "communities"]},
+  {"name": "Canada's National Observer", "url": "https://www.nationalobserver.com/front/rss", "topics": ["Canada", "politics", "climate", "energy", "investigations"]},
+  {"name": "rabble.ca", "url": "https://rabble.ca/feed/", "topics": ["Canada", "politics", "labour", "justice", "culture"]},
+  {"name": "IndigiNews", "url": "https://indiginews.com/feed/", "topics": ["Canada", "British Columbia", "Indigenous", "communities", "justice"]},
+  {"name": "Castanet Kamloops", "url": "https://www.castanet.net/rss/page-1.xml", "topics": ["Canada", "British Columbia", "Kamloops", "communities", "politics"]},
+  {"name": "CFJC Today Kamloops", "url": "https://cfjctoday.com/feed/", "topics": ["Canada", "British Columbia", "Kamloops", "communities", "politics"]},
+  {"name": "Government of Canada News", "url": "https://api.io.canada.ca/io-server/gc/news/en/v2?atomtitle=National+News&format=atom&orderBy=desc&pick=100&publishedDate%3E=2021-10-25&sort=publishedDate", "topics": ["Canada", "politics", "policy", "health", "business"]},
+  {"name": "PBS NewsHour", "url": "https://www.pbs.org/newshour/feeds/rss/headlines", "topics": ["United States", "world", "politics", "business", "culture"]},
+  {"name": "Al Jazeera English", "url": "https://www.aljazeera.com/xml/rss/all.xml", "topics": ["world", "Middle East", "politics", "conflict", "human rights"]},
+  {"name": "NPR News", "url": "https://feeds.npr.org/1001/rss.xml", "topics": ["United States", "world", "politics", "science", "culture"]},
+  {"name": "France 24 English", "url": "https://www.france24.com/en/rss", "topics": ["world", "Europe", "Africa", "Middle East", "politics"]},
+  {"name": "ABC News", "url": "https://feeds.abcnews.com/abcnews/topstories", "topics": ["United States", "world", "politics", "business", "culture"]},
+  {"name": "Le Monde English", "url": "https://www.lemonde.fr/en/international/rss_full.xml", "topics": ["world", "Europe", "France", "politics", "conflict"]},
+  {"name": "Euronews", "url": "https://www.euronews.com/rss?level=theme&name=news", "topics": ["world", "Europe", "politics", "business", "culture"]},
+  {"name": "Deutsche Welle English", "url": "https://rss.dw.com/rdf/rss-en-all", "topics": ["world", "Europe", "Germany", "politics", "culture"]},
+  {"name": "RNZ", "url": "https://www.rnz.co.nz/rss/national.xml", "topics": ["New Zealand", "Pacific", "politics", "communities", "culture"]},
+  {"name": "WHO News", "url": "https://www.who.int/rss-feeds/news-english.xml", "topics": ["world", "health", "science", "policy"]},
+  {"name": "UN News", "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml", "topics": ["world", "human rights", "conflict", "climate", "health"]},
+  {"name": "The Diplomat", "url": "https://thediplomat.com/feed/", "topics": ["world", "Asia", "politics", "conflict", "business"]},
+  {"name": "Hong Kong Free Press", "url": "https://hongkongfp.com/feed/", "topics": ["world", "Hong Kong", "China", "politics", "human rights"]},
+  {"name": "Middle East Eye", "url": "https://www.middleeasteye.net/rss", "topics": ["world", "Middle East", "politics", "conflict", "human rights"]},
+  {"name": "New Lines Magazine", "url": "https://newlinesmag.com/feed/", "topics": ["world", "politics", "history", "culture", "conflict"]},
+  {"name": "Americas Quarterly", "url": "https://www.americasquarterly.org/feed/", "topics": ["world", "Latin America", "politics", "business", "culture"]},
+  {"name": "Balkan Insight", "url": "https://balkaninsight.com/feed/", "topics": ["world", "Europe", "Balkans", "politics", "investigations"]},
+  {"name": "Mother Jones", "url": "https://www.motherjones.com/feed/", "topics": ["United States", "politics", "investigations", "climate", "justice"]},
+  {"name": "National Review", "url": "https://www.nationalreview.com/feed/", "topics": ["United States", "politics", "policy", "business", "culture"]},
+  {"name": "The Intercept", "url": "https://theintercept.com/feed/?lang=en", "topics": ["United States", "world", "politics", "investigations", "human rights"]},
+  {"name": "Rappler", "url": "https://www.rappler.com/feed/", "topics": ["world", "Philippines", "Asia", "politics", "human rights"]},
+  {"name": "The Dispatch", "url": "https://thedispatch.com/feed/", "topics": ["United States", "politics", "policy", "culture"]},
+  {"name": "Washington Monthly", "url": "https://washingtonmonthly.com/feed/", "topics": ["United States", "politics", "policy", "justice"]},
+  {"name": "Jacobin", "url": "https://jacobin.com/feed", "topics": ["United States", "world", "politics", "labour", "culture"]},
+  {"name": "Foundation for Economic Education", "url": "https://fee.org/feed/", "topics": ["business", "economics", "policy", "history", "culture"]},
+  {"name": "Compact", "url": "https://www.compactmag.com/rss/", "topics": ["United States", "politics", "labour", "culture", "ideas"]},
+  {"name": "Columbia Journalism Review", "url": "https://www.cjr.org/feed", "topics": ["media", "press freedom", "politics", "culture", "accountability"]},
+  {"name": "Persuasion", "url": "https://www.persuasion.community/feed", "topics": ["politics", "civil liberties", "culture", "ideas"]},
+  {"name": "UnHerd", "url": "https://unherd.com/feed/", "topics": ["United Kingdom", "world", "politics", "culture", "ideas"]},
+  {"name": "Full Fact", "url": "https://fullfact.org/feed/", "topics": ["United Kingdom", "politics", "fact checking", "accountability", "health"]},
+  {"name": "FAIR", "url": "https://fair.org/feed/", "topics": ["media", "politics", "accountability", "culture", "human rights"]},
+  {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index", "topics": ["technology", "science", "cybersecurity", "business", "culture"]},
+  {"name": "NASA", "url": "https://www.nasa.gov/feed/", "topics": ["science", "space", "technology", "research"]},
+  {"name": "IEEE Spectrum", "url": "https://spectrum.ieee.org/feeds/feed.rss", "topics": ["technology", "science", "engineering", "research", "business"]},
+  {"name": "Science-Based Medicine", "url": "https://sciencebasedmedicine.org/feed/", "topics": ["science", "health", "medicine", "research", "misinformation"]},
+  {"name": "STAT", "url": "https://www.statnews.com/feed/", "topics": ["health", "science", "medicine", "business", "policy"]},
+  {"name": "SBS News Australia", "url": "https://www.sbs.com.au/news/topic/australia/feed", "topics": ["Australia", "Oceania", "politics"]},
+  {"name": "RNZ Pacific", "url": "https://www.rnz.co.nz/rss/pacific.xml", "topics": ["Pacific", "Oceania", "world"]},
+  {"name": "Nippon.com", "url": "https://www.nippon.com/en/feed/", "topics": ["Japan", "Asia", "politics"]},
+  {"name": "Focus Taiwan", "url": "https://feeds.feedburner.com/rsscna/engnews/", "topics": ["Taiwan", "Asia", "politics"]},
+  {"name": "CNA Singapore", "url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416", "topics": ["Singapore", "Asia", "politics"]},
+  {"name": "The Hindu India", "url": "https://www.thehindu.com/news/national/feeder/default.rss", "topics": ["India", "South Asia", "politics"]},
+  {"name": "Dawn Pakistan", "url": "https://www.dawn.com/feeds/home", "topics": ["Pakistan", "South Asia", "politics"]},
+  {"name": "Daily Maverick", "url": "https://www.dailymaverick.co.za/dmrss/", "topics": ["South Africa", "Africa", "politics"]},
+  {"name": "Premium Times Nigeria", "url": "https://www.premiumtimesng.com/feed/", "topics": ["Nigeria", "West Africa", "politics"]},
+  {"name": "The Elephant Kenya", "url": "https://www.theelephant.info/feed/", "topics": ["Kenya", "East Africa", "politics"]},
+  {"name": "The Independent Uganda", "url": "https://www.independent.co.ug/feed/", "topics": ["Uganda", "East Africa", "politics"]},
+  {"name": "NewsDay Zimbabwe", "url": "https://www.newsday.co.zw/feed/", "topics": ["Zimbabwe", "Southern Africa", "politics"]},
+  {"name": "Agencia Brasil English", "url": "https://agenciabrasil.ebc.com.br/en/rss/ultimasnoticias/feed.xml", "topics": ["Brazil", "Latin America", "politics"]},
+  {"name": "Buenos Aires Herald", "url": "https://buenosairesherald.com/feed", "topics": ["Argentina", "Latin America", "politics"]},
+  {"name": "Mexico News Daily", "url": "https://mexiconewsdaily.com/feed/", "topics": ["Mexico", "Latin America", "politics"]},
+  {"name": "Colombia Reports", "url": "https://colombiareports.com/feed/", "topics": ["Colombia", "Latin America", "politics"]},
+  {"name": "RTE News", "url": "https://www.rte.ie/feeds/rss/?index=/news/", "topics": ["Ireland", "Europe", "politics"]},
+  {"name": "Yle News", "url": "https://feeds.yle.fi/uutiset/v1/recent.rss?publisherIds=YLE_NEWS", "topics": ["Finland", "Nordics", "politics"]},
+  {"name": "Notes from Poland", "url": "https://notesfrompoland.com/feed/", "topics": ["Poland", "Europe", "politics"]},
+  {"name": "Bianet English", "url": "https://bianet.org/rss/english", "topics": ["Turkey", "Middle East", "human rights"]},
+  {"name": "DutchNews", "url": "https://www.dutchnews.nl/feed/", "topics": ["Netherlands", "Europe", "politics"]},
+  {"name": "Civil.ge", "url": "https://civil.ge/feed", "topics": ["Georgia", "Caucasus", "politics"]},
+  {"name": "OC Media", "url": "https://oc-media.org/feed/", "topics": ["Caucasus", "Europe", "human rights"]},
+  {"name": "Egyptian Streets", "url": "https://egyptianstreets.com/feed/", "topics": ["Egypt", "North Africa", "politics"]},
+  {"name": "Prachatai English", "url": "https://prachataienglish.com/feed", "topics": ["Thailand", "Southeast Asia", "human rights"]},
+  {"name": "VnExpress International", "url": "https://e.vnexpress.net/rss/news.rss", "topics": ["Vietnam", "Southeast Asia", "politics"]},
+  {"name": "El Pais English", "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/english.elpais.com/portada", "topics": ["Spain", "Europe", "politics"]},
+  {"name":"BBC News World","url":"https://feeds.bbci.co.uk/news/world/rss.xml","topics":["world","politics","conflict","business"]},
+  {"name":"The Guardian World","url":"https://www.theguardian.com/world/rss","topics":["world","politics","conflict","human rights"]},
+  {"name":"Vox","url":"https://www.vox.com/rss/index.xml","topics":["politics","policy","science","culture"]},
+  {"name":"Axios","url":"https://api.axios.com/feed/","topics":["politics","business","technology","world"]},
+  {"name":"Common Dreams","url":"https://www.commondreams.org/feeds/feed.rss","topics":["politics","human rights","climate","labour"]},
+  {"name":"Truthout","url":"https://truthout.org/feed/","topics":["politics","justice","human rights","labour"]},
+  {"name":"The American Conservative","url":"https://www.theamericanconservative.com/feed/","topics":["politics","policy","world","culture"]},
+  {"name":"Salon","url":"https://www.salon.com/feed/","topics":["politics","culture","science","society"]},
+  {"name":"Christian Science Monitor","url":"https://rss.csmonitor.com/feeds/csm","topics":["world","politics","culture","society"]},
+  {"name":"The Conversation Africa","url":"https://theconversation.com/africa/articles.atom","topics":["Africa","politics","science","culture"]},
+  {"name":"The Conversation Global","url":"https://theconversation.com/global/articles.atom","topics":["world","science","health","politics"]},
+  {"name":"POLITICO Europe","url":"https://www.politico.eu/feed/","topics":["Europe","politics","policy","business"]},
+  {"name":"Phys.org","url":"https://phys.org/rss-feed/","topics":["science","technology","research","space"]},
+  {"name":"Nature News","url":"https://www.nature.com/nature.rss","topics":["science","research","health","climate"]},
+  {"name":"New Scientist","url":"https://www.newscientist.com/feed/home/","topics":["science","technology","health","space"]},
+  {"name":"MIT Technology Review","url":"https://www.technologyreview.com/feed/","topics":["technology","science","business","policy"]},
+  {"name":"ScienceDaily","url":"https://www.sciencedaily.com/rss/all.xml","topics":["science","health","climate","research"]},
+  {"name":"Live Science","url":"https://www.livescience.com/feeds/all","topics":["science","health","space","history"]},
+  {"name":"Space.com","url":"https://www.space.com/feeds/all","topics":["science","space","technology","research"]},
+  {"name":"The Verge","url":"https://www.theverge.com/rss/index.xml","topics":["technology","business","science","culture"]},
+  {"name":"Wired","url":"https://www.wired.com/feed/rss","topics":["technology","science","cybersecurity","culture"]},
+  {"name":"Engadget","url":"https://www.engadget.com/rss.xml","topics":["technology","business","science","culture"]},
+  {"name":"TechCrunch","url":"https://techcrunch.com/feed/","topics":["technology","business","startups","science"]},
+  {"name":"Hacker News","url":"https://hnrss.org/frontpage","topics":["technology","programming","science","community"]},
+  {"name":"Stack Overflow Blog","url":"https://stackoverflow.blog/feed/","topics":["technology","programming","open source","business"]},
+  {"name":"GitHub Blog","url":"https://github.blog/feed/","topics":["technology","programming","open source","cybersecurity"]},
+  {"name":"Mozilla Hacks","url":"https://hacks.mozilla.org/feed/","topics":["technology","programming","open source","internet"]},
+  {"name":"Rust Blog","url":"https://blog.rust-lang.org/feed.xml","topics":["technology","programming","open source"]},
+  {"name":"Go Blog","url":"https://go.dev/blog/feed.atom","topics":["technology","programming","open source"]},
+  {"name":"Martin Fowler","url":"https://martinfowler.com/feed.atom","topics":["technology","programming","business"]},
+  {"name":"Hackaday","url":"https://hackaday.com/blog/feed/","topics":["technology","hardware","engineering","open source"]},
+  {"name":"The Hacker News","url":"https://feeds.feedburner.com/TheHackersNews","topics":["cybersecurity","technology","privacy","crime"]},
+  {"name":"Dark Reading","url":"https://www.darkreading.com/rss.xml","topics":["cybersecurity","technology","privacy","business"]},
+  {"name":"SecurityWeek","url":"https://www.securityweek.com/feed/","topics":["cybersecurity","technology","privacy","business"]},
+  {"name":"SANS Internet Storm Center","url":"https://isc.sans.edu/rssfeed.xml","topics":["cybersecurity","technology","research","crime"]},
+  {"name":"Troy Hunt","url":"https://www.troyhunt.com/rss/","topics":["cybersecurity","privacy","technology","internet"]},
+  {"name":"Tor Project Blog","url":"https://blog.torproject.org/feed.xml","topics":["privacy","cybersecurity","internet","human rights"]},
+  {"name":"CISA Cybersecurity Advisories","url":"https://www.cisa.gov/cybersecurity-advisories/all.xml","topics":["cybersecurity","technology","policy","crime"]},
+  {"name":"Financial Times","url":"https://www.ft.com/rss/home","topics":["business","economics","world","politics"]},
+  {"name":"Bloomberg Markets","url":"https://feeds.bloomberg.com/markets/news.rss","topics":["business","economics","world","technology"]},
+  {"name":"CNBC World","url":"https://www.cnbc.com/id/100727362/device/rss/rss.html","topics":["business","economics","world","politics"]},
+  {"name":"MarketWatch","url":"https://feeds.marketwatch.com/marketwatch/topstories/","topics":["business","economics","world","technology"]},
+  {"name":"Naked Capitalism","url":"https://www.nakedcapitalism.com/feed","topics":["business","economics","politics","labour"]},
+  {"name":"Project Syndicate","url":"https://www.project-syndicate.org/rss","topics":["world","economics","politics","ideas"]},
+  {"name":"Yale Environment 360","url":"https://e360.yale.edu/feed.xml","topics":["climate","environment","science","energy"]},
+  {"name":"CleanTechnica","url":"https://cleantechnica.com/feed/","topics":["climate","energy","technology","business"]},
+  {"name":"Atlas Obscura","url":"https://www.atlasobscura.com/feeds/latest","topics":["culture","history","science","travel"]},
+  {"name":"Open Culture","url":"https://www.openculture.com/feed","topics":["culture","history","arts","ideas"]},
+  {"name":"Longreads","url":"https://longreads.com/feed/","topics":["culture","society","investigations","history"]},
+  {"name":"Kottke","url":"https://feeds.kottke.org/main","topics":["culture","technology","science","ideas"]},
+  {"name":"Nautilus","url":"https://nautil.us/feed/","topics":["science","culture","ideas","research"]},
+  {"name":"Noema","url":"https://www.noemamag.com/feed/","topics":["ideas","technology","politics","culture"]},
+  {"name":"ABC News Australia","url":"https://www.abc.net.au/news/feed/46182/rss.xml","topics":["Australia","Oceania","politics","world"]},
+  {"name":"Japan Today","url":"https://japantoday.com/feed","topics":["Japan","Asia","politics","culture"]},
+  {"name":"Scroll.in","url":"https://feeds.feedburner.com/ScrollinArticles.rss","topics":["India","South Asia","politics","culture"]},
+  {"name":"The Express Tribune","url":"https://tribune.com.pk/feed/home","topics":["Pakistan","South Asia","politics","world"]},
+  {"name":"Malaysiakini","url":"https://www.malaysiakini.com/rss/en/news.rss","topics":["Malaysia","Southeast Asia","politics","human rights"]},
+  {"name":"The Times of Israel","url":"https://www.timesofisrael.com/feed/","topics":["Israel","Middle East","politics","conflict"]},
+  {"name":"The Jerusalem Post","url":"https://www.jpost.com/rss/rssfeedsfrontpage.aspx","topics":["Israel","Middle East","politics","conflict"]},
+  {"name":"Al-Monitor","url":"https://www.al-monitor.com/rss","topics":["Middle East","politics","conflict","business"]},
+  {"name":"African Arguments","url":"https://africanarguments.org/feed/","topics":["Africa","politics","human rights","culture"]},
+  {"name":"Nyasa Times","url":"https://www.nyasatimes.com/feed/","topics":["Malawi","Africa","politics","communities"]},
+  {"name":"The Namibian","url":"https://www.namibian.com.na/feed/","topics":["Namibia","Southern Africa","politics","communities"]},
+  {"name":"Africanews","url":"https://www.africanews.com/feed/rss","topics":["Africa","world","politics","business"]},
+  {"name":"Jamaica Gleaner","url":"https://jamaica-gleaner.com/feed/rss.xml","topics":["Jamaica","Caribbean","politics","culture"]},
+  {"name":"Barbados Today","url":"https://barbadostoday.bb/feed/","topics":["Barbados","Caribbean","politics","communities"]},
+  {"name":"Kaieteur News","url":"https://kaieteurnewsonline.com/feed/","topics":["Guyana","Caribbean","politics","business"]},
+  {"name":"Haiti Libre English","url":"https://www.haitilibre.com/rss-flash-en.xml","topics":["Haiti","Caribbean","politics","human rights"]},
+  {"name":"The Tico Times","url":"https://ticotimes.net/feed","topics":["Costa Rica","Central America","politics","environment"]},
+  {"name":"MercoPress","url":"https://en.mercopress.com/rss","topics":["Latin America","politics","business","environment"]},
+  {"name":"Buenos Aires Times","url":"https://www.batimes.com.ar/feed","topics":["Argentina","Latin America","politics","business"]},
+  {"name":"Havana Times","url":"https://havanatimes.org/feed/","topics":["Cuba","Caribbean","politics","human rights"]}
+]

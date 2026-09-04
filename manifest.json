@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "tech.chuchua.news",
+  "name": "PYIN News",
+  "version": "0.18.0",
+  "author": "chuchua.tech",
+  "license": "MIT",
+  "homepage": "https://chuchua.tech",
+  "description": "PYIN is a private, keyboard-first news reader with persistent navigation, local reading history, an editable interest graph, transparent ranking, 200 RSS feeds, alerts, and selectable source-bounded AI.",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "panel": "App.qml"
+  },
+  "barWidget": {
+    "displayName": "PYIN News",
+    "description": "Curated RSS news, model-free catalog search, an explainable local profile, source controls, instant synopses, saves, alerts, and optional AI.",
+    "category": "Info",
+    "aliases": [
+      "news",
+      "rss",
+      "headlines",
+      "reader",
+      "chuchua",
+      "pyin"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "refreshMinutes": 30,
+      "interests": "",
+      "animateLogo": true
+    },
+    "schema": [
+      {
+        "key": "refreshMinutes",
+        "type": "integer",
+        "label": "Refresh every (minutes)",
+        "min": 5,
+        "max": 360,
+        "step": 5,
+        "defaultValue": 30,
+        "description": "RSS refreshes and catalog search never invoke AI. Per-story AI summaries are on demand only."
+      },
+      {
+        "key": "interests",
+        "type": "string",
+        "label": "Extra interest keywords",
+        "defaultValue": "",
+        "description": "Optional comma-separated keywords beyond the setup wizard. Reading-choice learning is controlled from the in-app profile."
+      },
+      {
+        "key": "animateLogo",
+        "type": "boolean",
+        "label": "Occasional split-flap logo",
+        "defaultValue": true,
+        "description": "Occasionally flip the four-letter PYIN masthead to NEWS while the feed is idle. Disable for a static logo."
+      }
+    ]
+  }
+}
