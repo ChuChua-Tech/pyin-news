@@ -42,6 +42,7 @@ Item {
   }
 
   function animatedLogo() {
+    if (root.effectProgress >= 100) return root.blockLogo
     var source = root.blockLogo
     var noise = ["░", "▒", "▓", "▀", "▄", "█"]
     var output = ""

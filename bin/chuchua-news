@@ -7,6 +7,7 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import email.utils
+from functools import lru_cache
 import gzip
 import hashlib
 import html
@@ -34,7 +35,7 @@ import xml.etree.ElementTree as ET
 
 APP_ID = "chuchua-news"
 PLUGIN_ID = "tech.chuchua.news"
-APP_VERSION = "0.21.0"
+APP_VERSION = "0.21.1"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -46,7 +47,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.21.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.21.1 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -65,6 +66,9 @@ TREND_WINDOW_SECONDS = 36 * 60 * 60
 TREND_CACHE_MAX_AGE_SECONDS = 2 * 60 * 60
 FTS_SCHEMA_VERSION = "1"
 CURATION_SCHEMA_VERSION = "6"
+# Bump when table, index, or trigger definitions change. SQLite's schema cookie
+# also invalidates the fast path after external schema changes or a downgrade.
+DB_SCHEMA_VERSION = "1"
 DISMISS_TERM_DELTA = 1.40
 DISMISS_SOURCE_DELTA = 0.35
 SHORT_MEMORY_DECAY = 0.93
@@ -274,6 +278,23 @@ def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    schema_cookie = conn.execute("PRAGMA schema_version").fetchone()[0]
+    try:
+        versions = dict(conn.execute(
+            "SELECT key, value FROM meta WHERE key IN "
+            "('db_schema_state', 'fts_schema_version', 'curation_schema_version')"
+        ))
+    except sqlite3.OperationalError as exc:
+        if str(exc) != "no such table: meta":
+            conn.close()
+            raise
+        versions = {}
+    if (
+        versions.get("db_schema_state") == f"{DB_SCHEMA_VERSION}:{schema_cookie}"
+        and versions.get("fts_schema_version") == FTS_SCHEMA_VERSION
+        and versions.get("curation_schema_version") == CURATION_SCHEMA_VERSION
+    ):
+        return conn
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS articles (
@@ -482,6 +503,9 @@ def db() -> sqlite3.Connection:
 
     # External-content FTS keeps search compact while normal article writes remain
     # the single source of truth. The one-time rebuild indexes existing installs.
+    fts_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'articles_fts'"
+    ).fetchone() is not None
     conn.executescript(
         """
         CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
@@ -513,7 +537,7 @@ def db() -> sqlite3.Connection:
     fts_version = conn.execute(
         "SELECT value FROM meta WHERE key = 'fts_schema_version'"
     ).fetchone()
-    if not fts_version or str(fts_version[0]) != FTS_SCHEMA_VERSION:
+    if not fts_exists or not fts_version or str(fts_version[0]) != FTS_SCHEMA_VERSION:
         conn.execute("INSERT INTO articles_fts(articles_fts) VALUES('rebuild')")
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('fts_schema_version', ?) "
@@ -521,6 +545,12 @@ def db() -> sqlite3.Connection:
             (FTS_SCHEMA_VERSION,),
         )
     _migrate_curation_schema(conn)
+    schema_cookie = conn.execute("PRAGMA schema_version").fetchone()[0]
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES('db_schema_state', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (f"{DB_SCHEMA_VERSION}:{schema_cookie}",),
+    )
     conn.commit()
     return conn
 
@@ -809,10 +839,24 @@ def source_values(value: Any, fallback: list[str]) -> list[str]:
     return [str(item).strip() for item in values if str(item).strip()]
 
 
+@lru_cache(maxsize=4)
+def _source_file_json(path: Path, stamp: tuple[int, int, int, int]) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_source_json(path: Path) -> Any:
+    stat = path.stat()
+    # This private input stays read-only: source_catalog builds fresh normalized
+    # records and lists. Profile additions are never cached. Inode/ctime also
+    # catch atomic replacements and preserved-mtime edits.
+    stamp = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+    return _source_file_json(path, stamp)
+
+
 def source_metadata() -> dict[str, dict[str, Any]]:
     if not SOURCE_CATALOG_PATH.exists():
         return {}
-    payload = json.loads(SOURCE_CATALOG_PATH.read_text(encoding="utf-8"))
+    payload = _read_source_json(SOURCE_CATALOG_PATH)
     rows = payload.get("sources", {}) if isinstance(payload, dict) else {}
     return rows if isinstance(rows, dict) else {}
 
@@ -822,7 +866,7 @@ def source_catalog(
     include_profile: bool = True,
 ) -> list[dict[str, Any]]:
     path = USER_SOURCES_PATH if USER_SOURCES_PATH.exists() else DEFAULT_SOURCES_PATH
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _read_source_json(path)
     if not isinstance(data, list):
         raise ValueError(f"{path} must contain a JSON array")
     rows: list[tuple[dict[str, Any], str]] = [
@@ -1044,11 +1088,13 @@ def rebuild_trend_scores(
     return len(rows)
 
 
-def ensure_trend_scores(
+def trend_scores_stale(
     conn: sqlite3.Connection,
     now: int,
     active_source_names: list[str],
-) -> None:
+    *,
+    check_window: bool = False,
+) -> bool:
     values = {
         str(row["key"]): str(row["value"])
         for row in conn.execute(
@@ -1062,8 +1108,27 @@ def ensure_trend_scores(
         updated = 0
     if (
         updated < now - TREND_CACHE_MAX_AGE_SECONDS
+        or updated > now
         or values.get("trend_scores_scope", "") != trend_scope(active_source_names)
     ):
+        return True
+    if check_window and active_source_names and now > updated:
+        placeholders = ",".join("?" for _ in active_source_names)
+        # Even an unchanged feed can lose corroboration as reports age out.
+        return conn.execute(
+            "SELECT 1 FROM articles WHERE published_ts >= ? AND published_ts < ? "
+            f"AND source IN ({placeholders}) LIMIT 1",
+            (updated - TREND_WINDOW_SECONDS, now - TREND_WINDOW_SECONDS, *active_source_names),
+        ).fetchone() is not None
+    return False
+
+
+def ensure_trend_scores(
+    conn: sqlite3.Connection,
+    now: int,
+    active_source_names: list[str],
+) -> None:
+    if trend_scores_stale(conn, now, active_source_names):
         with conn:
             rebuild_trend_scores(conn, now, active_source_names)
 
@@ -1269,8 +1334,19 @@ def refresh(background: bool = False, interval_minutes: int = 30) -> dict[str, A
             if result["status"] == "unchanged":
                 unchanged += 1
                 continue
+            # save_fetch_state has already acquired this transaction's write
+            # lock. Batch existence checks without confusing FTS trigger writes
+            # with inserts, and count repeated IDs exactly as sequential upserts.
+            existing_ids: set[str] = set()
+            article_ids = list(dict.fromkeys(item["id"] for item in articles))
+            for offset in range(0, len(article_ids), 500):
+                batch = article_ids[offset:offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                existing_ids.update(str(row[0]) for row in conn.execute(
+                    f"SELECT id FROM articles WHERE id IN ({placeholders})", batch
+                ))
             for item in articles:
-                existed = conn.execute("SELECT 1 FROM articles WHERE id = ?", (item["id"],)).fetchone() is not None
+                existed = item["id"] in existing_ids
                 conn.execute(
                     """
                     INSERT INTO articles
@@ -1292,21 +1368,31 @@ def refresh(background: bool = False, interval_minutes: int = 30) -> dict[str, A
                 else:
                     inserted += 1
                     new_articles.append(item)
+                    existing_ids.add(item["id"])
         ensure_event_index(conn)
-        conn.execute(
+        pruned = conn.execute(
             "DELETE FROM articles WHERE published_ts < ? "
             "AND id NOT IN (SELECT article_id FROM bookmarks)",
             (now - retention_days * 86400,),
-        )
+        ).rowcount
         if due_sources:
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('last_refresh', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(now),),
             )
         if due_sources:
-            rebuild_trend_scores(
-                conn, now, [str(source["name"]) for source in sources]
-            )
+            active_names = [str(source["name"]) for source in sources]
+            if inserted or updated or pruned or trend_scores_stale(
+                conn, now, active_names, check_window=True
+            ):
+                rebuild_trend_scores(conn, now, active_names)
+            else:
+                # The unchanged inputs were verified at this refresh. Preserve
+                # the existing feed-cache expiry schedule without rescoring.
+                conn.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'trend_scores_updated'",
+                    (str(now),),
+                )
         alert_hits = match_new_alerts(conn, new_articles, now)
     total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
     conn.close()
@@ -3719,7 +3805,7 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
     with conn:
         ensure_event_index(conn)
     setup = load_setup_profile(conn)
-    catalog = source_catalog()
+    catalog = source_catalog(setup)
     active_sources = filter_sources(catalog, setup)
     active_names = [str(source["name"]) for source in active_sources]
     source_by_name = {str(source["name"]): source for source in active_sources}
@@ -3730,7 +3816,9 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
         rows = list(
             conn.execute(
                 "WITH source_recent AS ("
-                "SELECT articles.*, event_articles.event_id AS persistent_event_id, ROW_NUMBER() OVER ("
+                "SELECT articles.id, url, title, source, feed_summary, published_ts, "
+                "source_topics, opened_count, trend_score, "
+                "event_articles.event_id AS persistent_event_id, ROW_NUMBER() OVER ("
                 "PARTITION BY source ORDER BY published_ts DESC, id ASC"
                 ") AS source_rank FROM articles JOIN event_articles ON event_articles.article_id = articles.id "
                 f"WHERE published_ts >= ? AND source IN ({placeholders})"
@@ -3750,8 +3838,8 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
     event_ids = {str(row["id"]): str(row["persistent_event_id"]) for row in rows}
 
     blocked_keywords = normalize_blocked_keywords(setup.get("blocked_keywords", []))
-    keyword_hidden = sum(1 for row in rows if blocked_keyword_match(row, blocked_keywords))
     rows = [row for row in rows if not blocked_keyword_match(row, blocked_keywords)]
+    keyword_hidden = candidate_rows - len(rows)
     read_ids = {
         str(row[0]) for row in conn.execute("SELECT article_id FROM read_articles")
     }
@@ -4139,10 +4227,15 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
     wanted = set(keywords(query, 24))
     conn = db()
     fts_expression = fts_search_expression(query)
+    columns = (
+        "articles.id, articles.url, articles.title, articles.source, "
+        "articles.feed_summary, articles.published_ts, "
+        "articles.source_topics, articles.opened_count"
+    )
     if fts_expression:
         rows = list(
             conn.execute(
-                "SELECT articles.* FROM articles_fts "
+                f"SELECT {columns} FROM articles_fts "
                 "JOIN articles ON articles.rowid = articles_fts.rowid "
                 "WHERE articles_fts MATCH ? "
                 "ORDER BY articles.published_ts DESC LIMIT 5000",
@@ -4152,7 +4245,7 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
     else:
         rows = list(
             conn.execute(
-                "SELECT * FROM articles ORDER BY published_ts DESC LIMIT 5000"
+                f"SELECT {columns} FROM articles ORDER BY published_ts DESC LIMIT 5000"
             )
         )
     bookmark_ids = {str(row[0]) for row in conn.execute("SELECT article_id FROM bookmarks")}
@@ -4206,8 +4299,6 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
                 "url": row["url"],
                 "title": title,
                 "source": source,
-                "summary": plain_text(summary, 320),
-                "synopsis": plain_text(summary, 1800),
                 "published_ts": int(row["published_ts"]),
                 "age": human_age(int(row["published_ts"]), now),
                 "opened": int(row["opened_count"]) > 0,
@@ -4216,16 +4307,19 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
                 "reason": reason,
                 "trend": 0,
                 "score": round(score, 3),
-                "feedback_targets": feedback_targets_for_article({
-                    "title": title,
-                    "feed_summary": summary,
-                    "source_topics": json.dumps(parsed_topics),
-                }),
+                "_row": row,
             }
         )
 
     matches.sort(key=lambda item: (item["score"], item["published_ts"]), reverse=True)
     selected = matches[: max(1, min(200, limit))]
+    # Scores and match statistics still cover the entire candidate set. Only
+    # displayed results need synopsis formatting and feedback target extraction.
+    for item in selected:
+        row = item.pop("_row")
+        item["summary"] = plain_text(str(row["feed_summary"]), 320)
+        item["synopsis"] = plain_text(str(row["feed_summary"]), 1800)
+        item["feedback_targets"] = feedback_targets_for_article(row)
     return {
         "ok": True,
         "query": query,
