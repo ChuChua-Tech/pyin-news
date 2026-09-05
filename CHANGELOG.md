@@ -5,6 +5,27 @@ Versioning.
 
 ## Unreleased
 
+## [0.21.1] - 2026-09-05
+
+### Changed
+
+- Faster local search by formatting only the results shown, while preserving
+  matching, ordering, and result counts.
+- Less database and CPU work when opening the feed or refreshing unchanged
+  sources. Corrected headlines, changing publishers, and ageing reports still
+  update coverage trends.
+- Lower loader animation overhead after its logo finishes appearing, with the
+  same appearance and timing.
+
+### Fixed
+
+- Recreating a missing search index now restores searchable cached stories.
+
+### Upgrade
+
+- Update normally through App & Updates. Existing articles, preferences, saved
+  stories, reading history, and AI settings are preserved.
+
 ## [0.21.0] - 2026-09-05
 
 ### Added
