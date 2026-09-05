@@ -33,6 +33,8 @@ import xml.etree.ElementTree as ET
 
 
 APP_ID = "chuchua-news"
+PLUGIN_ID = "tech.chuchua.news"
+APP_VERSION = "0.19.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -44,7 +46,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.18.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.19.0 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -106,6 +108,8 @@ STOPWORDS = {
     "yourself", "yourselves", "latest", "breaking", "live", "story", "stories",
 }
 
+ALERT_STOPWORDS = STOPWORDS | {"as", "at", "by", "in", "to"}
+
 # These are valid search words, but weak evidence of a lasting personal
 # interest. Keeping this list separate avoids changing Search or Alerts.
 INTEREST_NOISE_WORDS = STOPWORDS | {
@@ -115,7 +119,8 @@ INTEREST_NOISE_WORDS = STOPWORDS | {
     "long", "made", "make", "many", "move", "near", "order", "possible",
     "public", "say", "show", "single", "take", "three", "week", "world",
     "government", "minister", "president", "politics", "business", "culture",
-    "society", "communities", "technology", "science", "health", "conflict",
+    "society", "communities", "technology", "omarchy", "gaming", "sports",
+    "science", "health", "conflict",
     "policy", "justice", "history", "ideas", "research", "human", "rights",
     "centre", "centres", "center", "centers", "command", "cost", "costs",
     "data", "depends", "dire", "gave", "gift", "gifts", "giving", "going",
@@ -147,16 +152,18 @@ SIGNAL_LABELS = {
 }
 
 TOPIC_CATALOG = [
-    {"value": "canada", "label": "Canada", "description": "Canadian politics, communities, and public policy"},
     {"value": "world", "label": "World", "description": "International reporting and under-covered regions"},
     {"value": "politics", "label": "Politics", "description": "Government, elections, policy, and accountability"},
     {"value": "technology", "label": "Technology", "description": "Technology, the internet, and digital society"},
+    {"value": "omarchy", "label": "Omarchy", "description": "Omarchy releases, plugins, community, and desktop ecosystem"},
+    {"value": "gaming", "label": "Gaming", "description": "Video games, studios, platforms, releases, and games culture"},
     {"value": "cybersecurity", "label": "Cybersecurity", "description": "Security, privacy, fraud, and infrastructure"},
     {"value": "science", "label": "Science", "description": "Research, mathematics, physics, and biology"},
     {"value": "climate", "label": "Climate", "description": "Climate, environment, energy, and conservation"},
     {"value": "investigations", "label": "Investigations", "description": "Deep reporting, corruption, and accountability"},
     {"value": "business", "label": "Business", "description": "Economics, labour, companies, and markets"},
     {"value": "health", "label": "Health", "description": "Medicine, public health, and health policy"},
+    {"value": "sports", "label": "Sports", "description": "Teams, athletes, leagues, competition, and sports culture"},
     {"value": "culture", "label": "Culture", "description": "Media, communities, arts, and society"},
     {"value": "justice", "label": "Justice", "description": "Courts, policing, rights, and criminal justice"},
     {"value": "labour", "label": "Labour", "description": "Workers, unions, wages, and workplace power"},
@@ -2250,8 +2257,14 @@ def setup_state(profile: dict[str, Any] | None = None) -> dict[str, Any]:
                                 for value in source.get("types", [])
                             ),
                         ]
+                        + ([
+                            "topics " + "/".join(
+                                str(value) for value in source.get("topics", [])[:5]
+                            )
+                        ] if source.get("topics") else [])
                         + (["YOUR SOURCE"] if source.get("custom") else [])
                     ),
+                    "topics": source.get("topics", []),
                     "types": source.get("types", []),
                     "languages": source.get("languages", []),
                     "regions": source.get("regions", []),
@@ -3289,11 +3302,12 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
     query_terms = set(keywords(query, 20))
     query_folded = query.casefold()
     alert_terms = [
-        set(keywords(str(row["query"]), 16))
+        alert_keywords(str(row["query"]), 16)
         for row in conn.execute("SELECT query FROM alerts WHERE enabled = 1")
     ]
 
     token_sets: list[set[str]] = []
+    alert_token_sets: list[set[str]] = []
     row_topic_sets: list[set[str]] = []
     token_doc_counts: dict[str, int] = {}
     for row in rows:
@@ -3306,8 +3320,12 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
         tokens = set(keywords(
             f"{row['title']} {str(row['feed_summary'])[:900]} {row_topics}", 72
         ))
+        alert_tokens = set(alert_keywords(
+            f"{row['title']} {str(row['feed_summary'])[:4000]}", 320
+        )) if alert_terms else set()
         row_topic_sets.append(topics)
         token_sets.append(tokens)
+        alert_token_sets.append(alert_tokens)
         for token in tokens:
             token_doc_counts[token] = token_doc_counts.get(token, 0) + 1
 
@@ -3349,7 +3367,10 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
             # matcher path above.
             if query_folded in f"{title} {summary}".casefold():
                 query_score += 5.0
-        matching_alerts = [terms for terms in alert_terms if terms and terms.issubset(tokens)]
+        matching_alerts = [
+            terms for terms in alert_terms
+            if alert_terms_present(terms, alert_token_sets[index])
+        ]
         alert_score = min(5.0, 3.5 * len(matching_alerts))
         trend = int(row["trend_score"]) if age_hours <= 36 else 0
         trend_score = trend * 1.2
@@ -3723,6 +3744,70 @@ def search_articles(query: str, limit: int = 60) -> dict[str, Any]:
             "scope": "all cached sources",
             "personalized": False,
             "ai_used": False,
+        },
+    }
+
+
+def get_article(article_id_value: str) -> dict[str, Any]:
+    """Return one cached story for notification and other deep links."""
+    article_id_value = str(article_id_value or "").strip()
+    if not article_id_value:
+        raise ValueError("article id is required")
+    now = int(time.time())
+    conn = db()
+    row = conn.execute(
+        "SELECT * FROM articles WHERE id = ?", (article_id_value,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("article not found")
+    bookmarked = conn.execute(
+        "SELECT 1 FROM bookmarks WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    read = conn.execute(
+        "SELECT 1 FROM read_articles WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    dismissed = conn.execute(
+        "SELECT 1 FROM dismissed_articles WHERE article_id = ?", (article_id_value,)
+    ).fetchone() is not None
+    alert = conn.execute(
+        "SELECT alerts.query FROM alert_hits "
+        "JOIN alerts ON alerts.id = alert_hits.alert_id "
+        "WHERE alert_hits.article_id = ? "
+        "ORDER BY alert_hits.notified_ts DESC, alerts.id DESC LIMIT 1",
+        (article_id_value,),
+    ).fetchone()
+    conn.close()
+
+    alert_query = str(alert["query"]) if alert else ""
+    reason = f'matched your "{alert_query}" alert' if alert_query else "opened from notification"
+    return {
+        "ok": True,
+        "article": {
+            "id": str(row["id"]),
+            "url": str(row["url"]),
+            "title": str(row["title"]),
+            "source": str(row["source"]),
+            "summary": plain_text(row["feed_summary"], 320),
+            "synopsis": plain_text(row["feed_summary"], 1800),
+            "published_ts": int(row["published_ts"]),
+            "age": human_age(int(row["published_ts"]), now),
+            "opened": int(row["opened_count"]) > 0,
+            "bookmarked": bookmarked,
+            "read": read,
+            "dismissed": dismissed,
+            "reason": "subject alert" if alert_query else "notification",
+            "alert_query": alert_query,
+            "trend": 0,
+            "score": 0,
+            "feedback_targets": feedback_targets_for_article(row),
+            "cluster_id": str(row["id"]),
+            "cluster_ids": [str(row["id"])],
+            "coverage_count": 1,
+            "coverage_sources": [str(row["source"])],
+            "related_articles": [],
+            "why": [{"label": reason, "score": 0}],
+            "why_text": reason,
         },
     }
 
@@ -4114,36 +4199,44 @@ def remove_alert(alert_id: int) -> dict[str, Any]:
     return payload
 
 
-def alert_keywords(value: str) -> list[str]:
+def alert_keywords(value: str, limit: int = 16) -> list[str]:
     terms = []
-    for token in re.findall(r"[^\W\d_][\w'-]*", (value or "").casefold(), flags=re.UNICODE):
+    for token in KEYWORD_TOKEN_PATTERN.findall((value or "").casefold()):
         token = token.strip("'-")
-        if token in STOPWORDS or len(token) < 2:
+        if token in ALERT_STOPWORDS or len(token) < 2:
             continue
         if token not in terms:
             terms.append(token)
-    return terms[:16]
+        if limit > 0 and len(terms) >= limit:
+            break
+    return terms
+
+
+def alert_terms_present(wanted: list[str] | set[str], available: set[str]) -> bool:
+    """Match significant alert words against article-owned text only."""
+    def present(term: str) -> bool:
+        if term in available:
+            return True
+        if len(term) < 4:
+            return False
+        return any(
+            candidate.startswith(term) or term.startswith(candidate)
+            for candidate in available if len(candidate) >= 4
+        )
+
+    return bool(wanted) and all(present(term) for term in wanted)
 
 
 def alert_matches(query: str, article: dict[str, Any]) -> bool:
     wanted = alert_keywords(query)
     if not wanted:
         return False
-    try:
-        topic_text = " ".join(json.loads(str(article.get("source_topics") or "[]")))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        topic_text = ""
-    haystack = f"{article.get('title', '')} {article.get('feed_summary', '')} {topic_text}"
-    available = set(alert_keywords(haystack))
-
-    def present(term: str) -> bool:
-        if term in available:
-            return True
-        if len(term) < 4:
-            return False
-        return any(candidate.startswith(term) or term.startswith(candidate) for candidate in available if len(candidate) >= 4)
-
-    return all(present(term) for term in wanted)
+    # Source topics describe an entire publication or geography. Treating them
+    # as story text made an alert such as "Kamloops" match every item from a
+    # Kamloops-tagged feed, even when the article never mentioned Kamloops.
+    haystack = f"{article.get('title', '')} {str(article.get('feed_summary', ''))[:4000]}"
+    available = set(alert_keywords(haystack, 320))
+    return alert_terms_present(wanted, available)
 
 
 def match_new_alerts(
@@ -4181,8 +4274,51 @@ def match_new_alerts(
     return hits
 
 
+def alert_notification_command(
+    notifier: str,
+    native_omarchy: bool,
+    shell_client: str,
+    notification_icon: str,
+    headline: str,
+    body: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Build an argv-only notification command with an optional deep link."""
+    if native_omarchy:
+        return [
+            notifier,
+            "--app-name",
+            "PYIN News",
+            "--icon",
+            notification_icon,
+            "--urgency",
+            "normal",
+            "--expire-time",
+            "15000",
+            headline,
+            body,
+            "--exec",
+            shell_client,
+            "shell",
+            "summon",
+            PLUGIN_ID,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        ]
+    return [
+        notifier,
+        "--app-name",
+        "PYIN News",
+        "--icon",
+        notification_icon,
+        headline,
+        body,
+    ]
+
+
 def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
-    notifier = shutil.which("notify-send")
+    omarchy_notifier = shutil.which("omarchy-notification-send")
+    fallback_notifier = shutil.which("notify-send")
+    notifier = omarchy_notifier or fallback_notifier
     if not notifier or not hits:
         return 0
     setup = load_setup_profile()
@@ -4223,19 +4359,21 @@ def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
     notification_icon = (
         str(NOTIFICATION_ICON_PATH) if NOTIFICATION_ICON_PATH.is_file() else "news"
     )
+    shell_client = shutil.which("omarchy-shell") or "omarchy-shell"
+
     visible_hits = hits[: min(6, remaining)]
     for hit in visible_hits:
         try:
             completed = subprocess.run(
-                [
+                alert_notification_command(
                     notifier,
-                    "--app-name",
-                    "PYIN News",
-                    "--icon",
+                    bool(omarchy_notifier),
+                    shell_client,
                     notification_icon,
                     f"News alert: {hit['query']}",
-                    f"{hit['source']}\n{hit['title']}",
-                ],
+                    f"{hit['source']}\n{hit['title']}\nClick to read in PYIN",
+                    {"article_id": str(hit["article_id"])},
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=5,
@@ -4248,15 +4386,15 @@ def send_alert_notifications(hits: list[dict[str, Any]]) -> int:
     if len(hits) > len(visible_hits) and sent < remaining:
         try:
             completed = subprocess.run(
-                [
+                alert_notification_command(
                     notifier,
-                    "--app-name",
-                    "PYIN News",
-                    "--icon",
+                    bool(omarchy_notifier),
+                    shell_client,
                     notification_icon,
                     "More news alerts matched",
-                    f"{len(hits) - len(visible_hits)} additional new stories are in PYIN.",
-                ],
+                    f"{len(hits) - len(visible_hits)} additional new stories matched.\nClick to manage alerts.",
+                    {"view": "alerts"},
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=5,
@@ -4454,7 +4592,7 @@ def run_system_ai_stream(
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "clientInfo": {"name": "pyin-news", "title": "PYIN News", "version": "0.18.0"},
+                    "clientInfo": {"name": "pyin-news", "title": "PYIN News", "version": APP_VERSION},
                     "capabilities": {"experimentalApi": True},
                 },
             }
@@ -5022,6 +5160,260 @@ NEWS EXCERPTS:
     }
 
 
+def plugin_manifest_version() -> str:
+    try:
+        manifest = json.loads((PLUGIN_DIR / "manifest.json").read_text(encoding="utf-8"))
+        version = str(manifest.get("version") or "").strip()
+        return version or APP_VERSION
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return APP_VERSION
+
+
+def update_result_path() -> Path:
+    return STATE_DIR / "last-update.json"
+
+
+def recent_update_result() -> dict[str, Any]:
+    path = update_result_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    try:
+        age = int(time.time()) - int(payload.get("finished_ts", 0))
+    except (TypeError, ValueError):
+        return {}
+    return payload if 0 <= age <= 7 * 86400 else {}
+
+
+def run_plugin_git(*arguments: str, timeout: int = 25) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    environment.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
+    return subprocess.run(
+        ["git", "-C", str(PLUGIN_DIR), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=environment,
+    )
+
+
+def application_update_status(check_remote: bool = False) -> dict[str, Any]:
+    """Describe the safe Omarchy update path without changing the worktree."""
+    installed_version = plugin_manifest_version()
+    payload: dict[str, Any] = {
+        "ok": True,
+        "installed_version": installed_version,
+        "target_version": "",
+        "channel": "packaged",
+        "branch": "",
+        "git_managed": False,
+        "clean": True,
+        "checked": False,
+        "checked_ts": 0,
+        "can_check": False,
+        "can_install": False,
+        "update_available": False,
+        "state": "unmanaged",
+        "summary": f"PYIN {installed_version} · Packaged copy",
+        "detail": "This copy is not managed by Git. Reinstall it through Omarchy to receive updates.",
+        "current_commit": "",
+        "target_commit": "",
+        "last_result": recent_update_result(),
+    }
+    if not shutil.which("git"):
+        payload["detail"] = "Git is unavailable, so Omarchy cannot update this copy."
+        return payload
+
+    try:
+        root_result = run_plugin_git("rev-parse", "--show-toplevel")
+    except (OSError, subprocess.TimeoutExpired):
+        return payload
+    if root_result.returncode != 0:
+        return payload
+    try:
+        repository_root = Path(root_result.stdout.strip()).resolve()
+    except (OSError, RuntimeError):
+        return payload
+    if repository_root != PLUGIN_DIR.resolve():
+        return payload
+
+    branch_result = run_plugin_git("symbolic-ref", "--quiet", "--short", "HEAD")
+    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "detached"
+    commit_result = run_plugin_git("rev-parse", "HEAD")
+    current_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else ""
+    status_result = run_plugin_git("status", "--porcelain", "--untracked-files=normal")
+    clean = status_result.returncode == 0 and not status_result.stdout.strip()
+    payload.update({
+        "branch": branch,
+        "git_managed": True,
+        "clean": clean,
+        "current_commit": current_commit[:12],
+    })
+
+    if branch != "main":
+        payload.update({
+            "channel": "development",
+            "state": "development",
+            "summary": f"PYIN {installed_version} · Development checkout",
+            "detail": f"Branch {branch} is protected from the stable in-app updater. Promote and update it through Git.",
+        })
+        return payload
+
+    payload["channel"] = "stable"
+    if not clean:
+        payload.update({
+            "state": "modified",
+            "summary": f"PYIN {installed_version} · Local changes detected",
+            "detail": "The stable updater is disabled until local plugin changes are reviewed or committed.",
+        })
+        return payload
+
+    payload.update({
+        "state": "ready",
+        "summary": f"PYIN {installed_version} · Stable",
+        "detail": "Updates are checked and installed only when you ask.",
+        "can_check": True,
+    })
+    if not check_remote:
+        return payload
+
+    payload["checked"] = True
+    payload["checked_ts"] = int(time.time())
+    try:
+        fetched = run_plugin_git("fetch", "--quiet", "origin", "HEAD", timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        fetched = None
+    if fetched is None or fetched.returncode != 0:
+        payload.update({
+            "state": "check-failed",
+            "summary": "Could not check for updates",
+            "detail": "The plugin repository could not be reached. Your installed copy was not changed.",
+        })
+        return payload
+
+    target_result = run_plugin_git("rev-parse", "FETCH_HEAD")
+    target_commit = target_result.stdout.strip() if target_result.returncode == 0 else ""
+    payload["target_commit"] = target_commit[:12]
+    manifest_result = run_plugin_git("show", "FETCH_HEAD:manifest.json")
+    if manifest_result.returncode == 0:
+        try:
+            remote_manifest = json.loads(manifest_result.stdout)
+            payload["target_version"] = str(remote_manifest.get("version") or "").strip()
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    if target_commit and target_commit == current_commit:
+        payload.update({
+            "state": "current",
+            "summary": f"PYIN {installed_version} is up to date",
+            "detail": "You already have the newest stable release.",
+        })
+        return payload
+
+    ancestor = run_plugin_git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD")
+    if ancestor.returncode == 0:
+        target_version = str(payload.get("target_version") or "new release")
+        payload.update({
+            "state": "available",
+            "update_available": True,
+            "can_install": True,
+            "summary": f"PYIN {target_version} is ready",
+            "detail": "Omarchy will fast-forward, validate the plugin, roll back a failed validation, and reload PYIN.",
+        })
+        return payload
+
+    remote_ancestor = run_plugin_git("merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD")
+    if remote_ancestor.returncode == 0:
+        payload.update({
+            "state": "ahead",
+            "summary": f"PYIN {installed_version} · Local branch is ahead",
+            "detail": "This checkout contains commits newer than the stable repository. Continue through Git.",
+        })
+    else:
+        payload.update({
+            "state": "diverged",
+            "summary": f"PYIN {installed_version} · Manual update required",
+            "detail": "The local and stable histories have diverged, so Omarchy cannot safely fast-forward this copy.",
+        })
+    return payload
+
+
+def notify_update_result(payload: dict[str, Any]) -> None:
+    notifier = shutil.which("omarchy-notification-send") or shutil.which("notify-send")
+    if not notifier:
+        return
+    icon = str(NOTIFICATION_ICON_PATH) if NOTIFICATION_ICON_PATH.is_file() else "news"
+    headline = "PYIN News updated" if payload.get("ok") else "PYIN News update failed"
+    body = str(payload.get("summary") or payload.get("detail") or headline)
+    try:
+        subprocess.run(
+            [notifier, "--app-name", "PYIN News", "--icon", icon, headline, body],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def install_application_update() -> dict[str, Any]:
+    """Delegate installation to Omarchy's validated, rollback-capable updater."""
+    finished_ts = int(time.time())
+    try:
+        status = application_update_status(check_remote=True)
+        if not status.get("update_available") or not status.get("can_install"):
+            if status.get("state") == "current":
+                result = {
+                    "ok": True,
+                    "state": "current",
+                    "finished_ts": finished_ts,
+                    "installed_version": plugin_manifest_version(),
+                    "summary": "PYIN is already up to date.",
+                }
+            else:
+                raise RuntimeError(str(status.get("detail") or "No safe update is available"))
+        else:
+            omarchy = shutil.which("omarchy")
+            if not omarchy:
+                raise RuntimeError("The Omarchy updater is unavailable")
+            completed = subprocess.run(
+                [omarchy, "plugin", "update", PLUGIN_ID, "--yes"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "Omarchy could not install the update; the previous validated copy remains in place"
+                )
+            version = plugin_manifest_version()
+            result = {
+                "ok": True,
+                "state": "installed",
+                "finished_ts": int(time.time()),
+                "installed_version": version,
+                "summary": f"PYIN {version} installed successfully.",
+            }
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "state": "failed",
+            "finished_ts": int(time.time()),
+            "installed_version": plugin_manifest_version(),
+            "summary": str(exc),
+        }
+    write_json_atomic(update_result_path(), result)
+    notify_update_result(result)
+    return result
+
+
 def doctor() -> dict[str, Any]:
     now = int(time.time())
     conn = db()
@@ -5056,6 +5448,7 @@ def doctor() -> dict[str, Any]:
     agent = selected_agent()
     return {
         "ok": True,
+        "version": APP_VERSION,
         "database": str(DB_PATH),
         "articles": article_count,
         "profile_terms": profile_count,
@@ -5145,6 +5538,11 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser = sub.add_parser("search", help="Search every locally cached news source")
     search_parser.add_argument("--query", required=True)
     search_parser.add_argument("--limit", type=int, default=60)
+
+    article_parser = sub.add_parser(
+        "article", help="Return one cached article for an internal deep link"
+    )
+    article_parser.add_argument("--id", required=True, metavar="ARTICLE_ID")
 
     preferences_parser = sub.add_parser("preferences", help="Read or update persistent topic preferences")
     preferences_parser.add_argument("--set-topics", default=None, help="JSON array of topic values")
@@ -5263,6 +5661,17 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.add_argument("--query", required=True)
     add_ai_args(ask_parser)
 
+    updates_parser = sub.add_parser(
+        "updates", help="Inspect or install updates through Omarchy's native updater"
+    )
+    updates_action = updates_parser.add_mutually_exclusive_group()
+    updates_action.add_argument(
+        "--check", action="store_true", help="Fetch the stable branch and compare versions"
+    )
+    updates_action.add_argument(
+        "--install", action="store_true", help="Install an available validated update"
+    )
+
     sub.add_parser("doctor", help="Inspect local MVP readiness")
     sources_parser = sub.add_parser("sources", help="Print active sources")
     sources_parser.add_argument("--install-user-copy", action="store_true")
@@ -5285,6 +5694,8 @@ def main(argv: list[str] | None = None) -> int:
             return emit(bootstrap(args.limit, args.interests))
         if args.command == "search":
             return emit(search_articles(args.query, args.limit))
+        if args.command == "article":
+            return emit(get_article(args.id))
         if args.command == "preferences":
             return emit(preferences(args.set_topics))
         if args.command == "setup":
@@ -5373,6 +5784,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.local_model,
                 args.system_preset,
             ))
+        if args.command == "updates":
+            if args.install:
+                result = install_application_update()
+                return emit(result, 0 if result.get("ok") else 1)
+            return emit(application_update_status(args.check))
         if args.command == "doctor":
             return emit(doctor())
         if args.command == "sources":

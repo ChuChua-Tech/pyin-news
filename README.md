@@ -8,7 +8,7 @@ the reporting and subjects that matter, read a finite edition with a beginning
 and an end, then get on with your day.
 
 PYIN is a private, keyboard-first, tiled news reader for Omarchy. It ships with
-a catalog of 200 RSS/Atom feeds, groups repeated coverage into events, and
+a catalog of 226 RSS/Atom feeds, groups repeated coverage into events, and
 ranks those events locally using choices you can inspect and change. AI runs
 only when you explicitly request it.
 
@@ -30,7 +30,8 @@ panel is opened; it can be reopened later with `c` or from Profile.
 - A current Omarchy installation with shell-plugin support
 - Python 3 with its standard-library SQLite support (included with Omarchy)
 - Network access to the RSS/Atom and article hosts the reader checks
-- Optional: `notify-send` for subject-alert desktop notifications
+- Subject alerts use Omarchy's native notification sender; `notify-send` is a
+  non-clickable compatibility fallback when that helper is unavailable
 - Optional: Codex for System AI, or a loopback OpenAI-compatible server for
   Local server mode; the news reader remains fully usable with No AI
 
@@ -39,6 +40,14 @@ or elevated-privilege operation. Like every Omarchy shell plugin, its QML and
 helper process run unsandboxed with the permissions of the signed-in user.
 
 ## Update
+
+Profile → App & Updates can identify the installed version and channel, check
+the stable branch on demand, and install a release after a second confirmation.
+It delegates installation, validation, rollback, and shell reload to Omarchy.
+Checks are never automatic, development and modified checkouts are protected,
+and user data remains outside the plugin folder.
+
+The equivalent terminal command is:
 
 ```bash
 omarchy plugin update tech.chuchua.news
@@ -116,7 +125,9 @@ nothing is transmitted until the reader reviews and sends that draft.
 
 Subject-alert notifications use PYIN's bundled split-flap icon rather than the
 desktop theme's generic news tile. The asset stays inside the plugin and is
-resolved by absolute path, so it survives theme and icon-pack changes.
+resolved by absolute path, so it survives theme and icon-pack changes. Clicking
+an individual alert summons PYIN and opens that exact cached story, including
+from Omarchy's persisted notification history.
 
 While the feed is idle, the four mechanical cells occasionally flip from
 `PYIN` to `NEWS`, hold briefly, and return. This can be disabled with the
@@ -134,7 +145,7 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 - a 50-entry keyword blacklist that hard-filters the feed and alert notifications
 - independent, nonprofit, local, community, expert, original-research,
   mainstream, and grassroots source packs
-- a searchable catalogue showing every publisher, feed host, region, and source type
+- a searchable catalogue showing every publisher, feed host, region, source type, and topic
 - individual sources to hide plus up to 50 user-added RSS or Atom feeds
 - open-minded, broad, or familiar-first discovery ratios
 - desktop-alert quiet hours and a daily notification ceiling
@@ -145,6 +156,10 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 The app always inherits the active Omarchy palette, controls, borders, spacing,
 and type. The density choice changes layout without creating a competing theme.
 Every choice is visible later under Profile, and `c` reopens the wizard.
+Geography is deliberately separate from subject topics: the saved location
+provides each reader's local and national lens, while country names such as
+Canada remain ordinary searchable source metadata rather than privileged
+universal categories.
 
 ## Navigation, History, and Profile
 
@@ -341,7 +356,7 @@ and legacy open counts, while leaving dismissed stories hidden and keeping
 explicit interest-graph choices until they are individually removed.
 
 The Profile page is the control centre for topic choices, menu layout, article
-behaviour, AI speed, source setup, and local data. Its four primary groups and
+behaviour, AI speed, source setup, app updates, and local data. Its five primary groups and
 nested Setup & Source Mix and Show Less sections start collapsed, keeping
 everyday controls compact. Its Back-action switch chooses whether
 Back/Escape means “finished—mark read and hide” or simply returns without
@@ -355,7 +370,9 @@ optional footer link—and explicit interest nodes through
 `~/Downloads/chuchua-news-profile.json`.
 
 Subject alerts match all significant words locally against each newly fetched
-title, feed synopsis, and source topics. For example, `war in Iran` watches for
+title and publisher-provided feed synopsis. Static publisher topics and
+geography are deliberately excluded, so a `Kamloops`-tagged source does not
+trigger unless that story mentions Kamloops. For example, `war in Iran` watches for
 new items matching both `war` and `Iran`. Matches produce Omarchy desktop
 notifications and are de-duplicated per article. Alerts do not scan old cached
 items and never invoke AI.
@@ -391,11 +408,12 @@ the feed.
 
 ## Sources and local data
 
-The bundled 200-source list spans Canadian and Kamloops/BC reporting, Indigenous outlets,
+The bundled 226-source list spans Canadian and Kamloops/BC reporting, Indigenous outlets,
 public broadcasters, independent and nonprofit newsrooms, established general
 news, and country- or region-rooted reporting across Africa, Asia, Europe,
 Latin America, Oceania, and the Pacific, alongside competing political traditions, fact-checking,
-media criticism, technology, science, health, and primary institutions. More
+media criticism, technology, science, health, sports, gaming, official Omarchy
+updates, and primary institutions. More
 sources improve breadth, but source count is not a claim of neutrality.
 Descriptive, overlapping source-format metadata is maintained separately in
 `source-catalog.json` under CC0-1.0 and contains no proprietary political-bias

@@ -38,7 +38,9 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertTrue((ROOT / "README.md").is_file())
         self.assertTrue((ROOT / "preview.png").is_file())
         backend = (ROOT / "bin" / "chuchua-news").read_text(encoding="utf-8")
+        backend_module = load_backend()
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertEqual(backend_module.APP_VERSION, manifest["version"])
         self.assertIn(f"pyin-news/{manifest['version']}", backend)
         self.assertIn(f"## [{manifest['version']}]", changelog)
         for entry_point in manifest["entryPoints"].values():
@@ -47,7 +49,7 @@ class ReleasePackageTests(unittest.TestCase):
     def test_source_catalog_is_complete_and_unique(self):
         sources = load_json("sources.json")
         catalog = load_json("source-catalog.json")
-        self.assertEqual(len(sources), 200)
+        self.assertEqual(len(sources), 226)
 
         names = [source["name"].strip() for source in sources]
         urls = [source["url"].strip() for source in sources]
@@ -62,6 +64,63 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertIn(parsed.scheme, {"http", "https"})
             self.assertTrue(parsed.netloc)
             self.assertIsInstance(source.get("topics", []), list)
+
+    def test_vertical_topics_have_real_source_packs(self):
+        backend = load_backend()
+        sources = load_json("sources.json")
+        topic_values = {topic["value"] for topic in backend.TOPIC_CATALOG}
+        expected_pack_sizes = {"sports": 13, "gaming": 11, "omarchy": 2}
+
+        self.assertNotIn("canada", topic_values)
+        for topic, expected_count in expected_pack_sizes.items():
+            self.assertIn(topic, topic_values)
+            matching = [
+                source for source in sources
+                if topic in {str(value).casefold() for value in source.get("topics", [])}
+            ]
+            self.assertEqual(len(matching), expected_count)
+
+    def test_location_relevance_replaces_a_country_specific_topic(self):
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            backend.CONFIG_DIR = base / "config"
+            backend.STATE_DIR = base / "state"
+            backend.DB_PATH = backend.STATE_DIR / "news.sqlite3"
+            now = 1_800_000_000
+            profile = backend.default_setup_profile()
+            profile["complete"] = True
+            profile["location"] = {"country": "Canada", "region": "", "city": ""}
+            conn = backend.db()
+            with conn:
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('setup_profile', ?)",
+                    (json.dumps(profile),),
+                )
+                conn.executemany(
+                    "INSERT INTO articles "
+                    "(id, url, title, source, feed_summary, published_ts, fetched_ts, source_topics) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            "local-story", "https://example.ca/local", "Community update",
+                            "The Tyee", "A regional report.", now, now,
+                            json.dumps(["Canada"]),
+                        ),
+                        (
+                            "other-story", "https://example.com/other", "Distant update",
+                            "ProPublica", "An unrelated report.", now, now,
+                            json.dumps(["United States"]),
+                        ),
+                    ],
+                )
+            conn.close()
+
+            with mock.patch.object(backend.time, "time", return_value=now):
+                articles, _stats = backend.ranked_articles(15)
+
+        self.assertEqual(articles[0]["id"], "local-story")
+        self.assertEqual(articles[0]["reason"], "near you")
 
     def test_release_documents_reference_public_commands(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -100,8 +159,8 @@ class ReleasePackageTests(unittest.TestCase):
             report = json.loads(completed.stdout)
             self.assertTrue(report["ok"])
             self.assertEqual(report["curation_engine"], "v3")
-            self.assertEqual(report["sources"], 200)
-            self.assertEqual(report["catalog_sources"], 200)
+            self.assertEqual(report["sources"], 226)
+            self.assertEqual(report["catalog_sources"], 226)
             self.assertFalse(report["setup_complete"])
 
     def test_feed_parser_repairs_an_isolated_legacy_byte(self):
@@ -154,6 +213,190 @@ class ReleasePackageTests(unittest.TestCase):
                 "https://www.cbc.ca/webfeed/rss/rss-topstories", 1024
             )
         self.assertEqual(captured_headers["User-agent"], "Mozilla/5.0")
+
+    def test_alert_notification_carries_an_argv_only_article_deep_link(self):
+        backend = load_backend()
+        command = backend.alert_notification_command(
+            "/usr/bin/omarchy-notification-send",
+            True,
+            "/usr/bin/omarchy-shell",
+            "/tmp/pyin-news.svg",
+            "News alert: Kamloops",
+            "Example Source\nExample story",
+            {"article_id": "article-123"},
+        )
+
+        exec_index = command.index("--exec")
+        self.assertEqual(
+            command[exec_index + 1:exec_index + 6],
+            [
+                "/usr/bin/omarchy-shell",
+                "shell",
+                "summon",
+                backend.PLUGIN_ID,
+                '{"article_id":"article-123"}',
+            ],
+        )
+        self.assertNotIn("bash", command)
+        self.assertNotIn("sh", command)
+
+    def test_alerts_match_story_text_not_static_source_geography(self):
+        backend = load_backend()
+        source_tag_only = {
+            "title": "Vehicle fire caused an explosion",
+            "feed_summary": "Crews responded early Tuesday morning.",
+            "source_topics": json.dumps(["Kamloops", "British Columbia"]),
+        }
+        title_match = {
+            **source_tag_only,
+            "title": "Kamloops vehicle fire caused an explosion",
+        }
+        synopsis_match = {
+            **source_tag_only,
+            "feed_summary": "The investigation continues in Kamloops.",
+        }
+
+        self.assertFalse(backend.alert_matches("Kamloops", source_tag_only))
+        self.assertTrue(backend.alert_matches("Kamloops", title_match))
+        self.assertTrue(backend.alert_matches("Kamloops", synopsis_match))
+        self.assertTrue(backend.alert_matches(
+            "war in Iran",
+            {"title": "Iranian officials discuss war", "feed_summary": ""},
+        ))
+
+    def test_update_status_protects_development_and_finds_stable_fast_forwards(self):
+        backend = load_backend()
+
+        def completed(arguments, returncode=0, stdout=""):
+            return subprocess.CompletedProcess(arguments, returncode, stdout, "")
+
+        def development_git(*arguments, **_kwargs):
+            key = tuple(arguments)
+            responses = {
+                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="develop\n"),
+                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
+                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
+            }
+            return responses[key]
+
+        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(backend, "run_plugin_git", side_effect=development_git), \
+                mock.patch.object(backend, "recent_update_result", return_value={}):
+            protected = backend.application_update_status(check_remote=True)
+
+        self.assertEqual(protected["state"], "development")
+        self.assertFalse(protected["can_check"])
+        self.assertFalse(protected["can_install"])
+
+        def stable_git(*arguments, **_kwargs):
+            key = tuple(arguments)
+            responses = {
+                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="main\n"),
+                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
+                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
+                ("fetch", "--quiet", "origin", "HEAD"): completed(arguments),
+                ("rev-parse", "FETCH_HEAD"): completed(arguments, stdout="b" * 40 + "\n"),
+                ("show", "FETCH_HEAD:manifest.json"): completed(
+                    arguments, stdout=json.dumps({"version": "0.20.0"})
+                ),
+                ("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"): completed(arguments),
+            }
+            return responses[key]
+
+        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(backend, "run_plugin_git", side_effect=stable_git), \
+                mock.patch.object(backend, "recent_update_result", return_value={}):
+            available = backend.application_update_status(check_remote=True)
+
+        self.assertEqual(available["state"], "available")
+        self.assertEqual(available["target_version"], "0.20.0")
+        self.assertTrue(available["can_install"])
+
+    def test_update_install_delegates_to_omarchy_after_safe_check(self):
+        backend = load_backend()
+        update_status = {
+            "ok": True,
+            "state": "available",
+            "update_available": True,
+            "can_install": True,
+        }
+        completed = subprocess.CompletedProcess([], 0, "Updated tech.chuchua.news.\n", "")
+
+        with mock.patch.object(
+            backend, "application_update_status", return_value=update_status
+        ), mock.patch.object(
+            backend.shutil, "which", return_value="/usr/bin/omarchy"
+        ), mock.patch.object(
+            backend.subprocess, "run", return_value=completed
+        ) as run, mock.patch.object(
+            backend, "plugin_manifest_version", return_value="0.19.0"
+        ), mock.patch.object(
+            backend, "write_json_atomic"
+        ) as write_result, mock.patch.object(backend, "notify_update_result"):
+            payload = backend.install_application_update()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["state"], "installed")
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/omarchy", "plugin", "update", backend.PLUGIN_ID, "--yes"],
+        )
+        write_result.assert_called_once()
+
+    def test_profile_exposes_manual_confirmed_native_updates(self):
+        profile_qml = (ROOT / "ProfilePage.qml").read_text(encoding="utf-8")
+        app_qml = (ROOT / "App.qml").read_text(encoding="utf-8")
+
+        self.assertIn("APP & UPDATES", profile_qml)
+        self.assertIn("Check for updates", profile_qml)
+        self.assertIn("Confirm update", profile_qml)
+        self.assertIn('[root.backendPath, "updates", "--install"]', app_qml)
+        self.assertIn("Quickshell.execDetached", app_qml)
+
+    def test_cached_article_endpoint_supports_notification_deep_links(self):
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            backend.CONFIG_DIR = base / "config"
+            backend.STATE_DIR = base / "state"
+            backend.DB_PATH = backend.STATE_DIR / "news.sqlite3"
+            conn = backend.db()
+            with conn:
+                conn.execute(
+                    "INSERT INTO articles "
+                    "(id, url, title, source, feed_summary, published_ts, fetched_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "article-123",
+                        "https://example.com/story",
+                        "A local story",
+                        "Example Source",
+                        "The publisher-provided synopsis.",
+                        1_800_000_000,
+                        1_800_000_001,
+                    ),
+                )
+                cursor = conn.execute(
+                    "INSERT INTO alerts(query, enabled, created_ts) VALUES(?, 1, ?)",
+                    ("Kamloops", 1_800_000_002),
+                )
+                conn.execute(
+                    "INSERT INTO alert_hits(alert_id, article_id, notified_ts) "
+                    "VALUES(?, ?, ?)",
+                    (cursor.lastrowid, "article-123", 1_800_000_003),
+                )
+            conn.close()
+
+            payload = backend.get_article("article-123")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["article"]["id"], "article-123")
+        self.assertEqual(payload["article"]["alert_query"], "Kamloops")
+        self.assertEqual(payload["article"]["synopsis"], "The publisher-provided synopsis.")
+        self.assertEqual(payload["article"]["cluster_ids"], ["article-123"])
 
 
 if __name__ == "__main__":

@@ -110,6 +110,11 @@ Item {
   property int historyCount: 0
   property int readCount: 0
   property var profileData: ({})
+  property var applicationUpdateData: ({})
+  property bool applicationUpdateCheckRemote: false
+  property bool applicationUpdateLaunching: false
+  property int applicationUpdateStartedTs: 0
+  property int applicationUpdatePolls: 0
   property var learnedArticles: ({})
   property int selectedIndex: 0
   property int savedIndex: 0
@@ -186,6 +191,9 @@ Item {
   property string aiAction: ""
   property string activeArticleId: ""
   property var activeArticle: null
+  property string pendingDeepLinkArticleId: ""
+  property string pendingDeepLinkView: ""
+  property string activeDeepLinkArticleId: ""
   property bool confirmProfileReset: false
   property string profileTransferAction: ""
   property bool actionHudExpanded: false
@@ -304,6 +312,7 @@ Item {
     { option: "EXTRA INTEREST KEYWORDS", effect: "Adds explicit keyword boosts beyond the setup topic catalog." },
     { option: "LEARNING", effect: "When off, no new reading signals are recorded and existing inferred memory stops affecting ranking." },
     { option: "RETENTION", effect: "Controls how long ordinary cached articles and local learning history are kept. Saved stories are exempt." },
+    { option: "APP UPDATES", effect: "Checks the stable Git branch only when requested. Installation requires confirmation and delegates validation, rollback, and reload to Omarchy; it never changes your local news data." },
     { option: "PERSONALIZED RANKING", effect: "One local engine combines setup choices, explicit interests, reading memory, freshness, diversity, and discovery. AI never chooses the feed order." },
     { option: "BACK ACTION", effect: "Either returns immediately and marks the article read, or returns while leaving it available. Mark Read itself stays neutral." },
     { option: "SEARCH NEWS", effect: "Searches all locally cached stories without AI, ranking personalization, blacklist filtering, or read-state filtering." },
@@ -350,9 +359,34 @@ Item {
     var payload = ({})
     try { payload = JSON.parse(String(payloadJson || "{}")) || ({}) } catch (e) {}
     if (payload.settings) root.settings = payload.settings
+    if (payload.article_id) {
+      root.pendingDeepLinkArticleId = String(payload.article_id)
+      root.pendingDeepLinkView = ""
+    } else if (String(payload.view || "") === "alerts") {
+      root.pendingDeepLinkArticleId = ""
+      root.pendingDeepLinkView = "alerts"
+    }
     root.closingFromHost = false
     root.opened = true
     root.loadBootstrap()
+  }
+
+  function fulfillDeepLink() {
+    if (root.pendingDeepLinkArticleId !== "") {
+      if (deepLinkArticleProc.running) return
+      root.activeDeepLinkArticleId = root.pendingDeepLinkArticleId
+      root.pendingDeepLinkArticleId = ""
+      root.statusText = "Opening alert story…"
+      deepLinkArticleProc.command = [
+        root.backendPath, "article", "--id", root.activeDeepLinkArticleId
+      ]
+      deepLinkArticleProc.running = true
+      return
+    }
+    if (root.pendingDeepLinkView === "alerts") {
+      root.pendingDeepLinkView = ""
+      root.showAlerts()
+    }
   }
 
   function loadApplicationData() {
@@ -516,7 +550,12 @@ Item {
       after: root.lastFeedAfterIds,
       mutation_revision: root.feedMutationRevision,
       load_running: loadProc.running,
-      pending_reason: root.pendingFeedLoadReason
+      pending_reason: root.pendingFeedLoadReason,
+      view: root.viewMode,
+      active_article_id: root.activeArticleId,
+      pending_deep_link_id: root.pendingDeepLinkArticleId,
+      active_deep_link_id: root.activeDeepLinkArticleId,
+      deep_link_running: deepLinkArticleProc.running
     })
   }
 
@@ -1082,11 +1121,33 @@ Item {
     profileProc.running = true
   }
 
+  function loadApplicationUpdateStatus(checkRemote) {
+    if (updateStatusProc.running) return
+    root.applicationUpdateCheckRemote = Boolean(checkRemote)
+    var command = [root.backendPath, "updates"]
+    if (checkRemote) command.push("--check")
+    updateStatusProc.command = command
+    updateStatusProc.running = true
+    if (checkRemote) root.statusText = "Checking the stable PYIN release…"
+  }
+
+  function installApplicationUpdate() {
+    if (root.applicationUpdateLaunching
+        || !Boolean(root.applicationUpdateData.can_install)) return
+    root.applicationUpdateLaunching = true
+    root.applicationUpdateStartedTs = Math.floor(Date.now() / 1000)
+    root.applicationUpdatePolls = 0
+    profilePage.confirmUpdate = false
+    root.statusText = "Updating through Omarchy · PYIN will reload when verified"
+    Quickshell.execDetached([root.backendPath, "updates", "--install"])
+  }
+
   function showProfile() {
     root.confirmProfileReset = false
     root.viewMode = "profile"
     profilePage.resetSections()
     root.loadProfile()
+    root.loadApplicationUpdateStatus(false)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2009,7 +2070,30 @@ Item {
           }, false, "bootstrap")
         } else root.loadFeed(true, "bootstrap-stale")
         Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        Qt.callLater(function() { root.fulfillDeepLink() })
       }
+    }
+  }
+
+  Process {
+    id: deepLinkArticleProc
+    stdout: StdioCollector { id: deepLinkArticleStdout; waitForEnd: true }
+    stderr: StdioCollector { id: deepLinkArticleStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parsePayload(deepLinkArticleStdout.text,
+        String(deepLinkArticleStderr.text || "Could not open that alert story"))
+      root.activeDeepLinkArticleId = ""
+      if (!payload.ok || !payload.article) {
+        root.statusText = payload.error
+          ? "Alert story unavailable · " + String(payload.error)
+          : "That alert story is no longer in local storage"
+      } else {
+        root.returnViewMode = "feed"
+        root.showArticle(payload.article)
+        root.statusText = "Opened from subject alert · stored locally"
+      }
+      if (!bootstrapProc.running && root.pendingDeepLinkArticleId !== "")
+        Qt.callLater(function() { root.fulfillDeepLink() })
     }
   }
 
@@ -2499,6 +2583,31 @@ Item {
   }
 
   Process {
+    id: updateStatusProc
+    stdout: StdioCollector { id: updateStatusStdout; waitForEnd: true }
+    stderr: StdioCollector { id: updateStatusStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parsePayload(updateStatusStdout.text,
+        String(updateStatusStderr.text || "Could not inspect app updates"))
+      if (!payload.ok) {
+        root.statusText = payload.error || "Could not inspect app updates"
+        root.applicationUpdateCheckRemote = false
+        return
+      }
+      root.applicationUpdateData = payload
+      var lastResult = payload.last_result || ({})
+      if (root.applicationUpdateLaunching
+          && Number(lastResult.finished_ts || 0) >= root.applicationUpdateStartedTs) {
+        root.applicationUpdateLaunching = false
+        root.statusText = String(lastResult.summary || "Update finished")
+      } else if (root.applicationUpdateCheckRemote) {
+        root.statusText = String(payload.summary || "Update check finished")
+      }
+      root.applicationUpdateCheckRemote = false
+    }
+  }
+
+  Process {
     id: profileResetProc
     stdout: StdioCollector { id: profileResetStdout; waitForEnd: true }
     stderr: StdioCollector { id: profileResetStderr; waitForEnd: true }
@@ -2561,6 +2670,21 @@ Item {
     onTriggered: {
       root.refreshOutcomeText = ""
       root.refreshOutcomeDetail = ""
+    }
+  }
+
+  Timer {
+    interval: 2000
+    repeat: true
+    running: root.applicationUpdateLaunching
+    onTriggered: {
+      root.applicationUpdatePolls++
+      if (root.applicationUpdatePolls >= 90) {
+        root.applicationUpdateLaunching = false
+        root.statusText = "Update is taking longer than expected · check again from Profile"
+      } else if (!updateStatusProc.running) {
+        root.loadApplicationUpdateStatus(false)
+      }
     }
   }
 
@@ -4236,7 +4360,7 @@ Item {
               anchors.top: alertsTitle.bottom
               anchors.topMargin: Style.spacing.sm
               textFormat: Text.PlainText
-              text: "Get an Omarchy notification when a newly fetched story matches all significant words. Matching is local and does not invoke AI."
+              text: "Get an Omarchy notification when a newly fetched story matches all significant words. Click an individual alert to open that exact story in PYIN. Matching is local and does not invoke AI."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -4393,6 +4517,7 @@ Item {
             counts: root.profileCounts
             storage: root.profileStorage
             exposure: root.profileExposure
+            updateData: root.applicationUpdateData
             showLessTermText: root.showLessTermSummary()
             showLessSourceText: root.showLessSourceSummary()
             profileBusy: profileProc.running
@@ -4403,6 +4528,8 @@ Item {
             interestBusy: interestProc.running
             transferBusy: profileTransferProc.running
             resetBusy: profileResetProc.running
+            updateBusy: updateStatusProc.running
+            updateLaunching: root.applicationUpdateLaunching
             confirmReset: root.confirmProfileReset
 
             onDestinationRequested: function(destination) {
@@ -4429,6 +4556,8 @@ Item {
             onExportRequested: root.exportProfile()
             onImportRequested: root.importProfile()
             onResetRequested: root.resetProfileLearning()
+            onUpdateCheckRequested: root.loadApplicationUpdateStatus(true)
+            onUpdateInstallRequested: root.installApplicationUpdate()
           }
 
           Flickable {

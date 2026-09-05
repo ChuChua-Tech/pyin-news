@@ -29,10 +29,13 @@ Maintainer notes:
 4. Run `omarchy plugin validate .` on current Omarchy.
 5. Run a full refresh from an empty temporary XDG state directory and review
    every source error.
-6. Commit, push `main`, and wait for GitHub Actions to pass.
-7. Install from the public GitHub URL into a clean Omarchy profile; test first
+6. Verify App & Updates reports development checkouts as protected, then test a
+   stable fast-forward and a validation-failure rollback in an isolated HOME.
+7. Commit, push `develop`, and wait for GitHub Actions to pass.
+8. Fast-forward `main`, push it, and wait for the release commit's Actions run.
+9. Install from the public GitHub URL into a clean Omarchy profile; test first
    launch, update, and removal.
-8. Tag the verified commit as `v<version>` and create the GitHub release.
-9. Submit the repository through the official Omarchy plugin form.
+10. Tag the verified commit as `v<version>` and create the GitHub release.
+11. Submit the repository through the official Omarchy plugin form.
 
 Do not tag a release while the worktree is dirty or CI is failing.
