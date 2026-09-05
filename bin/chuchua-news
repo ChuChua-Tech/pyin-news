@@ -34,7 +34,7 @@ import xml.etree.ElementTree as ET
 
 APP_ID = "chuchua-news"
 PLUGIN_ID = "tech.chuchua.news"
-APP_VERSION = "0.20.0"
+APP_VERSION = "0.21.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -46,7 +46,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.20.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.21.0 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -173,13 +173,23 @@ TOPIC_CATALOG = [
 ]
 TOPIC_VALUES = {str(topic["value"]) for topic in TOPIC_CATALOG}
 
-SETUP_PROFILE_VERSION = 6
+SETUP_PROFILE_VERSION = 8
 PROFILE_EXPORT_FORMAT = "chuchua-news-profile"
 PROFILE_EXPORT_VERSION = 3
 MAX_CUSTOM_SOURCES = 50
 NAVIGATION_ITEMS = ("bookmarks", "history", "alerts", "refresh")
-DEFAULT_SYSTEM_AI_PRESET = "balanced"
+DEFAULT_SYSTEM_AI_PRESET = "configured"
+# Frozen compatibility data for old profiles and CLI flags, never a model picker.
+# New model choices come from the agent's catalog or explicit user input.
 SYSTEM_AI_PRESET_CATALOG = [
+    {
+        "value": "configured",
+        "label": "My configured model",
+        "model": "",
+        "model_label": "Configured model",
+        "effort": "",
+        "description": "Use the selected agent's own model and reasoning settings; generate a fresh summary on request",
+    },
     {
         "value": "fast",
         "label": "Fast",
@@ -285,6 +295,28 @@ def db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_ts DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_last_opened
           ON articles(last_opened_ts DESC);
+        CREATE TABLE IF NOT EXISTS news_events (
+          id TEXT PRIMARY KEY,
+          anchor_title TEXT NOT NULL,
+          anchor_ts INTEGER NOT NULL,
+          seen_through INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS event_articles (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          article_id TEXT NOT NULL UNIQUE,
+          event_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_articles_event
+          ON event_articles(event_id, sequence);
+        CREATE TRIGGER IF NOT EXISTS articles_event_ad AFTER DELETE ON articles BEGIN
+          DELETE FROM news_events WHERE id = (
+            SELECT event_id FROM event_articles WHERE article_id = old.id
+          ) AND NOT EXISTS (
+            SELECT 1 FROM event_articles
+            WHERE event_id = news_events.id AND article_id <> old.id
+          );
+          DELETE FROM event_articles WHERE article_id = old.id;
+        END;
         CREATE TABLE IF NOT EXISTS profile (
           term TEXT PRIMARY KEY,
           weight REAL NOT NULL,
@@ -1260,6 +1292,7 @@ def refresh(background: bool = False, interval_minutes: int = 30) -> dict[str, A
                 else:
                     inserted += 1
                     new_articles.append(item)
+        ensure_event_index(conn)
         conn.execute(
             "DELETE FROM articles WHERE published_ts < ? "
             "AND id NOT IN (SELECT article_id FROM bookmarks)",
@@ -2167,7 +2200,8 @@ def default_setup_profile(legacy_topics: list[str] | None = None) -> dict[str, A
         },
         "ai": {
             "mode": "system",
-            "system_preset": DEFAULT_SYSTEM_AI_PRESET,
+            "system_model": "",
+            "system_effort": "",
             "local_url": "http://127.0.0.1:11434/v1",
             "local_model": "llama3.2:3b",
         },
@@ -2286,12 +2320,11 @@ def normalize_setup_profile(value: Any, legacy_topics: list[str] | None = None) 
     ai_mode = str(ai.get("mode") or "system")
     if ai_mode not in {"system", "local", "off"}:
         ai_mode = "system"
-    system_preset = str(ai.get("system_preset") or DEFAULT_SYSTEM_AI_PRESET).casefold()
-    if system_preset not in SYSTEM_AI_PRESET_BY_VALUE:
-        system_preset = DEFAULT_SYSTEM_AI_PRESET
+    selection = profile_system_ai_choice(ai)
     result["ai"] = {
         "mode": ai_mode,
-        "system_preset": system_preset,
+        "system_model": selection["model"],
+        "system_effort": selection["effort"],
         "local_url": clean_profile_text(ai.get("local_url") or result["ai"]["local_url"], 300),
         "local_model": clean_profile_text(ai.get("local_model") or result["ai"]["local_model"], 160),
     }
@@ -2345,13 +2378,13 @@ def setup_state(profile: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "profile": current,
+        "system_ai_status": system_ai_status(),
         "catalogs": {
             "topics": TOPIC_CATALOG,
             "languages": languages,
             "source_types": source_types,
             "viewpoints": VIEWPOINT_CATALOG,
             "reading": READING_CATALOG,
-            "system_ai": SYSTEM_AI_PRESET_CATALOG,
         },
         "sources": {
             "active": len(active),
@@ -2459,8 +2492,24 @@ def set_system_ai_preset(preset: str) -> dict[str, Any]:
     if not bool(profile.get("complete")):
         raise ValueError("finish setup before changing the System AI preset")
     ai = profile.get("ai", {}) if isinstance(profile.get("ai"), dict) else {}
-    ai["system_preset"] = value
+    selected = system_ai_configuration(value)
+    ai.pop("system_preset", None)
+    ai["system_model"] = selected["model"]
+    ai["system_effort"] = selected["effort"]
     profile["ai"] = ai
+    return save_setup_profile(json.dumps(profile, ensure_ascii=False))
+
+
+def set_system_ai_model(selection_json: str) -> dict[str, Any]:
+    selection = json.loads(selection_json)
+    if not isinstance(selection, dict):
+        raise ValueError("model selection must be an object")
+    selected = system_ai_configuration(selection)
+    profile = load_setup_profile()
+    if not profile.get("complete"):
+        raise ValueError("finish setup before changing the AI model")
+    profile["ai"]["system_model"] = selected["model"]
+    profile["ai"]["system_effort"] = selected["effort"]
     return save_setup_profile(json.dumps(profile, ensure_ascii=False))
 
 
@@ -2549,7 +2598,8 @@ def validate_imported_profile(raw: Any) -> None:
     # Earlier exports contain the same core fields. These additions may be
     # absent only in the older schemas that predate them.
     introduced = {
-        "behavior": 2, "blocked_keywords": 2, "ai.system_preset": 3,
+        "behavior": 2, "blocked_keywords": 2,
+        "ai.system_model": 8, "ai.system_effort": 8,
         "navigation": 4, "custom_sources": 5, "appearance.footer_link": 5,
         "appearance.background": 6,
     }
@@ -2587,6 +2637,9 @@ def validate_imported_profile(raw: Any) -> None:
             raise ValueError("local AI model is empty")
     if "system_preset" in raw["ai"]:
         choice("ai.system_preset", raw["ai"]["system_preset"], SYSTEM_AI_PRESET_BY_VALUE)
+    elif 3 <= version < 8 and "system_model" not in raw["ai"]:
+        raise ValueError("missing profile field: ai.system_preset")
+    profile_system_ai_choice(raw["ai"])
     lists = {
         "languages": (raw["languages"], {item["value"] for item in LANGUAGE_CATALOG}),
         "source_types": (raw["source_types"], SOURCE_TYPE_VALUES),
@@ -3137,6 +3190,7 @@ def curation_profile() -> dict[str, Any]:
             "bucket_minutes": IMPRESSION_BUCKET_SECONDS // 60,
         },
         "setup": setup,
+        "system_ai_status": system_ai_status(),
         "source_counts": {"active": len(active_sources), "total": len(catalog)},
         "source_mix": source_mix,
     }
@@ -3152,6 +3206,7 @@ def reset_learning() -> dict[str, Any]:
         conn.execute("DELETE FROM curation_sources")
         conn.execute("DELETE FROM curation_signals")
         conn.execute("DELETE FROM article_impressions")
+        conn.execute("UPDATE news_events SET seen_through = NULL")
         conn.execute("DELETE FROM article_feedback WHERE action = 'not-interest'")
         conn.execute(
             "UPDATE dismissed_articles SET terms = '[]', source = '', learning_applied = 0"
@@ -3235,6 +3290,143 @@ def event_similarity(
     return 0.0
 
 
+def ensure_event_index(conn: sqlite3.Connection) -> None:
+    """Assign new cache entries once; rankings and later arrivals cannot move them.
+
+    Callers own the transaction. A write lock serializes first-use backfills with
+    refreshes. Anchors are immutable, so neither title edits nor bridge stories
+    merge established events or stretch their four-day matching window.
+    """
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    pending = list(conn.execute(
+        "SELECT id, title, published_ts FROM articles WHERE NOT EXISTS "
+        "(SELECT 1 FROM event_articles WHERE article_id = articles.id) "
+        "ORDER BY published_ts DESC, id ASC"
+    ))
+    if not pending:
+        return
+    anchors: dict[str, tuple[int, tuple[set[str], set[str]]]] = {}
+    postings: dict[str, set[str]] = {}
+
+    def add_anchor(identity: str, title: str, timestamp: int) -> None:
+        features = event_features(title)
+        anchors[identity] = (timestamp, features)
+        for token in features[0]:
+            postings.setdefault(token, set()).add(identity)
+
+    for row in conn.execute("SELECT id, anchor_title, anchor_ts FROM news_events"):
+        add_anchor(str(row["id"]), str(row["anchor_title"]), int(row["anchor_ts"]))
+    for row in pending:
+        features = event_features(str(row["title"]))
+        candidates: set[str] = set()
+        for token in features[0]:
+            candidates.update(postings.get(token, set()))
+        identity = ""
+        best = 0.0
+        for candidate in sorted(candidates):
+            timestamp, anchor = anchors[candidate]
+            if abs(int(row["published_ts"]) - timestamp) > EVENT_CLUSTER_WINDOW_SECONDS:
+                continue
+            similarity = event_similarity(features, anchor)
+            if similarity > best:
+                identity, best = candidate, similarity
+        if not identity:
+            identity = hashlib.sha256(("event-v1:" + str(row["id"])).encode()).hexdigest()[:24]
+            conn.execute(
+                "INSERT INTO news_events(id, anchor_title, anchor_ts) VALUES (?, ?, ?)",
+                (identity, str(row["title"]), int(row["published_ts"])),
+            )
+            add_anchor(identity, str(row["title"]), int(row["published_ts"]))
+        conn.execute(
+            "INSERT INTO event_articles(article_id, event_id) VALUES (?, ?)",
+            (str(row["id"]), identity),
+        )
+
+
+def event_coverage(article_id_value: str) -> dict[str, Any]:
+    """A local snapshot; reading it never advances the visit watermark."""
+    conn = db()
+    try:
+        with conn:
+            ensure_event_index(conn)
+        with conn:
+            conn.execute("BEGIN")
+            event = conn.execute(
+                "SELECT news_events.* FROM news_events JOIN event_articles "
+                "ON event_articles.event_id = news_events.id WHERE article_id = ?",
+                (article_id_value,),
+            ).fetchone()
+            if not event:
+                raise ValueError("This story is no longer in the local cache.")
+            setup = load_setup_profile(conn)
+            active_names = {str(source["name"]) for source in filter_sources(source_catalog(setup), setup)}
+            blocked = normalize_blocked_keywords(setup.get("blocked_keywords", []))
+            rows = list(conn.execute(
+                "SELECT articles.*, event_articles.sequence, "
+                "EXISTS(SELECT 1 FROM bookmarks WHERE article_id = articles.id) AS bookmarked, "
+                "EXISTS(SELECT 1 FROM read_articles WHERE article_id = articles.id) AS is_read "
+                "FROM event_articles JOIN articles ON articles.id = event_articles.article_id "
+                "WHERE event_id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM dismissed_articles WHERE article_id = articles.id) "
+                "ORDER BY published_ts ASC, articles.id ASC",
+                (event["id"],),
+            ))
+            rows = [row for row in rows if str(row["source"]) in active_names
+                    and not blocked_keyword_match(row, blocked)]
+            now = int(time.time())
+            seen = event["seen_through"]
+            articles = [{
+                "id": str(row["id"]), "url": str(row["url"]),
+                "title": str(row["title"]), "source": str(row["source"]),
+                "summary": plain_text(row["feed_summary"], 320),
+                "synopsis": plain_text(row["feed_summary"], 1800),
+                "published_ts": int(row["published_ts"]),
+                "age": human_age(int(row["published_ts"]), now),
+                "bookmarked": bool(row["bookmarked"]), "read": bool(row["is_read"]),
+                "opened": int(row["opened_count"]) > 0,
+                "event_id": str(event["id"]),
+                # Opening a timeline report acts on that report, not the event.
+                "cluster_ids": [str(row["id"])],
+                "coverage_count": 1, "coverage_sources": [str(row["source"])],
+                "reason": "event coverage", "why_text": "similar headlines within four days",
+                "why": [{"label": "event coverage", "score": 0}],
+                "feedback_targets": feedback_targets_for_article(row),
+                "is_new": seen is not None and int(row["sequence"]) > int(seen),
+            } for row in rows]
+            return {
+                "ok": True, "event_id": str(event["id"]),
+                "title": articles[-1]["title"] if articles else "No visible coverage",
+                "articles": articles, "article_count": len(articles),
+                "source_count": len({article["source"] for article in articles}),
+                "new_count": sum(article["is_new"] for article in articles),
+                "first_visit": seen is None,
+                "seen_through": max((int(row["sequence"]) for row in rows), default=0),
+            }
+    finally:
+        conn.close()
+
+
+def mark_event_seen(event_id: str, through: int) -> dict[str, Any]:
+    """Acknowledge only a displayed snapshot; later arrivals remain unseen."""
+    conn = db()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if through <= 0 or not conn.execute(
+                "SELECT 1 FROM event_articles WHERE event_id = ? AND sequence = ?",
+                (event_id, through),
+            ).fetchone():
+                raise ValueError("Event snapshot is no longer available.")
+            conn.execute(
+                "UPDATE news_events SET seen_through = MAX(COALESCE(seen_through, 0), ?) WHERE id = ?",
+                (through, event_id),
+            )
+        return {"ok": True, "event_id": event_id, "seen_through": through}
+    finally:
+        conn.close()
+
+
 def prepare_interest_matchers(
     terms: set[str],
 ) -> list[tuple[str, str, str, re.Pattern[str] | None]]:
@@ -3280,12 +3472,22 @@ def _article_rank_key(item: dict[str, Any]) -> tuple[float, int, str]:
     return (-float(item["score"]), -int(item["published_ts"]), str(item["id"]))
 
 
-def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def cluster_articles(
+    scored: list[dict[str, Any]], event_ids: dict[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Collapse near-identical cross-publisher events into one inspectable card."""
     clusters: list[dict[str, Any]] = []
+    persistent_clusters: dict[str, dict[str, Any]] = {}
     postings: dict[str, set[int]] = {}
     ordered = sorted(scored, key=lambda item: (-int(item["published_ts"]), str(item["id"])))
     for item in ordered:
+        if event_ids is not None:
+            identity = event_ids[str(item["id"])]
+            if identity not in persistent_clusters:
+                persistent_clusters[identity] = {"members": [], "event_id": identity}
+                clusters.append(persistent_clusters[identity])
+            persistent_clusters[identity]["members"].append(item)
+            continue
         features = item["_event_features"]
         candidate_counts: dict[int, int] = {}
         for token in features[0]:
@@ -3340,7 +3542,7 @@ def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
 
         bounded_members = members[:MAX_CLUSTER_ARTICLES]
         cluster_ids = [str(member["id"]) for member in bounded_members]
-        cluster_id = hashlib.sha256("\n".join(sorted(cluster_ids)).encode("utf-8")).hexdigest()[:16]
+        cluster_id = cluster.get("event_id") or hashlib.sha256("\n".join(sorted(cluster_ids)).encode("utf-8")).hexdigest()[:16]
         plain_member_bases: list[dict[str, Any]] = []
         visible_sources: set[str] = set()
         for member in bounded_members:
@@ -3354,6 +3556,8 @@ def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
             }
             plain_member_bases.append(base)
         representative["cluster_id"] = cluster_id
+        if cluster.get("event_id"):
+            representative["event_id"] = cluster_id
         representative["cluster_ids"] = cluster_ids
         representative["coverage_count"] = coverage_count
         representative["coverage_sources"] = sources
@@ -3512,6 +3716,8 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
     """Rank locally with the single explainable v3 curation engine."""
     now = int(time.time())
     conn = db()
+    with conn:
+        ensure_event_index(conn)
     setup = load_setup_profile(conn)
     catalog = source_catalog()
     active_sources = filter_sources(catalog, setup)
@@ -3524,9 +3730,9 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
         rows = list(
             conn.execute(
                 "WITH source_recent AS ("
-                "SELECT articles.*, ROW_NUMBER() OVER ("
+                "SELECT articles.*, event_articles.event_id AS persistent_event_id, ROW_NUMBER() OVER ("
                 "PARTITION BY source ORDER BY published_ts DESC, id ASC"
-                ") AS source_rank FROM articles "
+                ") AS source_rank FROM articles JOIN event_articles ON event_articles.article_id = articles.id "
                 f"WHERE published_ts >= ? AND source IN ({placeholders})"
                 ") SELECT * FROM source_recent WHERE source_rank <= ? "
                 "ORDER BY published_ts DESC, id ASC LIMIT ?",
@@ -3541,6 +3747,7 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
     else:
         rows = []
     candidate_rows = len(rows)
+    event_ids = {str(row["id"]): str(row["persistent_event_id"]) for row in rows}
 
     blocked_keywords = normalize_blocked_keywords(setup.get("blocked_keywords", []))
     keyword_hidden = sum(1 for row in rows if blocked_keyword_match(row, blocked_keywords))
@@ -3780,7 +3987,7 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
             }
         )
 
-    clustered, duplicates_collapsed = cluster_articles(scored)
+    clustered, duplicates_collapsed = cluster_articles(scored, event_ids)
     discovery_percent = int(setup.get("viewpoint", {}).get("discovery_percent", 25))
     personalized = bool(
         learned or must_terms or interested_terms or location_terms or explicit_nodes
@@ -4731,10 +4938,223 @@ def selected_agent() -> str:
         value = AGENT_PATH.read_text(encoding="utf-8").strip().splitlines()[0]
         return Path(value).name.casefold()
     except (OSError, IndexError):
-        return "codex" if codex_path() else ""
+        return ""
 
 
-def system_ai_configuration(preset: str) -> dict[str, str]:
+def system_ai_status() -> dict[str, Any]:
+    """Inspect the chosen adapter and executable without starting an agent."""
+    agent = selected_agent()
+    labels = {"codex": "Codex", "claude": "Claude Code", "gemini": "Gemini",
+              "opencode": "OpenCode", "pi": "Pi", "omp": "Oh My Pi",
+              "grok": "Grok", "copilot": "GitHub Copilot", "crush": "Crush"}
+    label = labels.get(agent, clean_profile_text(agent, 80))
+    if not agent:
+        status = "unset"
+        message = "No AI agent is selected in Omarchy. Choose one in Omarchy, or use Local server or No AI."
+    elif agent != "codex":
+        status = "unsupported"
+        message = f"{label} is selected in Omarchy. PYIN does not support this agent yet. Local server and No AI remain available."
+    elif not codex_path():
+        status = "missing"
+        message = "Codex is selected in Omarchy, but its command is unavailable. Check its installation, or use Local server or No AI."
+    else:
+        status = "available"
+        message = "Codex is selected in Omarchy. PYIN uses its existing sign-in and configuration. Sign-in is checked when you request a summary."
+    return {"agent": agent, "label": label, "status": status,
+            "available": status == "available", "message": message}
+
+
+def require_system_ai() -> None:
+    status = system_ai_status()
+    if not status["available"]:
+        raise RuntimeError(str(status["message"]))
+
+
+def discover_codex_models() -> list[dict[str, Any]]:
+    """Read the agent catalog only; never create a thread or inference turn."""
+    require_system_ai()
+    ensure_dirs()
+    process = subprocess.Popen(
+        [codex_path(), "app-server", "--stdio"], cwd=STATE_DIR,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+    messages: queue.Queue[str | None] = queue.Queue(maxsize=2048)
+    stopped = threading.Event()
+
+    def read() -> None:
+        try:
+            for line in process.stdout:
+                if stopped.is_set():
+                    break
+                try:
+                    messages.put(line, timeout=0.1)
+                except queue.Full:
+                    break
+        finally:
+            try:
+                messages.put(None, timeout=0.1)
+            except queue.Full:
+                pass
+
+    threading.Thread(target=read, daemon=True).start()
+    deadline = time.monotonic() + 15
+
+    def send(value: dict[str, Any]) -> None:
+        process.stdin.write(json.dumps(value) + "\n")
+        process.stdin.flush()
+
+    def response(request_id: int) -> dict[str, Any]:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Model discovery timed out. Retry or enter a model manually.")
+            try:
+                line = messages.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise RuntimeError("Model discovery timed out. Retry or enter a model manually.") from exc
+            if line is None:
+                raise RuntimeError("Codex closed model discovery. Retry or enter a model manually.")
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(message, dict) or message.get("id") != request_id or "method" in message:
+                continue
+            if message.get("error"):
+                raise RuntimeError("Codex could not list models. Check its sign-in and configuration, or enter a model manually.")
+            result = message.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError("Codex returned an invalid model catalog.")
+            return result
+
+    try:
+        send({"id": 1, "method": "initialize", "params": {
+            "clientInfo": {"name": "pyin-news", "version": APP_VERSION}}})
+        response(1)
+        send({"method": "initialized"})
+        models = []
+        seen_models: set[str] = set()
+        seen_cursors: set[str] = set()
+        cursor = None
+        for request_id in range(2, 27):
+            params = {"limit": 100, "includeHidden": False}
+            if cursor:
+                params["cursor"] = cursor
+            send({"id": request_id, "method": "model/list", "params": params})
+            result = response(request_id)
+            if not isinstance(result.get("data"), list):
+                raise RuntimeError("Codex returned an invalid model catalog.")
+            for row in result["data"]:
+                if not isinstance(row, dict) or row.get("hidden"):
+                    continue
+                modalities = row.get("inputModalities", ["text"])
+                if not isinstance(modalities, list) or "text" not in modalities:
+                    continue
+                try:
+                    model = validate_model_identifier(row.get("model", ""))
+                except ValueError:
+                    continue
+                if not model or model in seen_models:
+                    continue
+                efforts = []
+                for item in row.get("supportedReasoningEfforts") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        effort = validate_model_identifier(item.get("reasoningEffort", ""), effort=True)
+                    except ValueError:
+                        continue
+                    if effort and effort not in [e["value"] for e in efforts]:
+                        efforts.append({"value": effort, "label": effort,
+                                        "description": clean_profile_text(item.get("description"), 240)})
+                seen_models.add(model)
+                models.append({"value": model, "label": clean_profile_text(row.get("displayName"), 200) or model,
+                               "description": clean_profile_text(row.get("description"), 400),
+                               "efforts": efforts, "is_default": row.get("isDefault") is True})
+                if len(models) > 1000:
+                    raise RuntimeError("The model catalog is too large. Enter a model manually.")
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return models
+            if not isinstance(cursor, str) or cursor in seen_cursors:
+                raise RuntimeError("Codex returned an invalid model catalog cursor.")
+            seen_cursors.add(cursor)
+        raise RuntimeError("The model catalog has too many pages. Enter a model manually.")
+    finally:
+        stopped.set()
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
+
+
+def ai_models(refresh: bool = False) -> dict[str, Any]:
+    status = system_ai_status()
+    if not status["available"]:
+        return {"ok": False, "models": [], "agent": status["agent"], "error": status["message"]}
+    # Cache discovery, not access entitlement. Config changes and a manual refresh
+    # invalidate it; the agent remains authoritative when a model is requested.
+    config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+    try:
+        config_stamp = config.stat().st_mtime_ns
+    except OSError:
+        config_stamp = 0
+    identity = hashlib.sha256(json.dumps([status["agent"], codex_path(), config_stamp]).encode()).hexdigest()
+    cache_path = STATE_DIR / "ai-models.json"
+    cached: dict[str, Any] = {}
+    try:
+        candidate = json.loads(cache_path.read_text())
+        if (isinstance(candidate, dict) and candidate.get("identity") == identity
+                and isinstance(candidate.get("models"), list)
+                and isinstance(candidate.get("fetched_at"), (int, float))):
+            cached = candidate
+    except (OSError, ValueError):
+        pass
+    if cached and not refresh and 0 <= time.time() - cached["fetched_at"] < 900:
+        return {"ok": True, "models": cached["models"], "agent": status["agent"], "cached": True}
+    try:
+        models = discover_codex_models()
+        write_json_atomic(cache_path, {"identity": identity, "models": models, "fetched_at": time.time()})
+        return {"ok": True, "models": models, "agent": status["agent"], "cached": False}
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {"ok": False, "models": cached.get("models", []), "agent": status["agent"],
+                "stale": bool(cached), "error": str(exc)}
+
+
+def validate_model_identifier(value: Any, *, effort: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError("model and reasoning settings must be text")
+    value = value.strip()
+    pattern = r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}" if effort else r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}"
+    if value and not re.fullmatch(pattern, value):
+        raise ValueError("invalid reasoning setting" if effort else "invalid model name")
+    return value
+
+
+def profile_system_ai_choice(ai: dict[str, Any]) -> dict[str, str]:
+    if "system_model" in ai:
+        return system_ai_configuration({"model": ai["system_model"],
+                                        "effort": ai.get("system_effort", "")})
+    return system_ai_configuration(str(ai.get("system_preset") or DEFAULT_SYSTEM_AI_PRESET))
+
+
+def system_ai_configuration(preset: str | dict[str, Any]) -> dict[str, str]:
+    if isinstance(preset, dict):
+        model = validate_model_identifier(preset.get("model", ""))
+        effort = validate_model_identifier(preset.get("effort", ""), effort=True)
+        if effort and not model:
+            raise ValueError("choose a model before overriding reasoning")
+        return {"value": "custom" if model else "configured", "model": model,
+                "effort": effort, "model_label": model or "Agent default",
+                "label": model or "Agent default"}
     value = str(preset or DEFAULT_SYSTEM_AI_PRESET).casefold().strip()
     selected = SYSTEM_AI_PRESET_BY_VALUE.get(
         value, SYSTEM_AI_PRESET_BY_VALUE[DEFAULT_SYSTEM_AI_PRESET]
@@ -4748,21 +5168,23 @@ def system_ai_configuration(preset: str) -> dict[str, str]:
     }
 
 
-def system_ai_provider_label(preset: str) -> str:
+def system_ai_provider_label(preset: str | dict[str, Any]) -> str:
     selected = system_ai_configuration(preset)
+    if selected["value"] == "custom":
+        return "System AI · Codex · " + selected["model"] + (
+            " · " + selected["effort"] if selected["effort"] else "")
+    if selected["value"] == "configured":
+        return "System AI · Codex · configured model"
     return (
         f"System AI · {selected['label']} · {selected['model_label']}"
         f" · {selected['effort']}"
     )
 
 
-def run_system_ai(prompt: str, system_preset: str) -> tuple[str, str]:
-    agent = selected_agent()
-    if agent != "codex":
-        raise RuntimeError(
-            f"Omarchy's selected agent is '{agent or 'unknown'}'. The MVP System AI adapter currently supports Codex; "
-            "choose Codex as the Omarchy agent or select Local server in the widget settings."
-        )
+def run_system_ai(prompt: str, system_preset: str | dict[str, Any]) -> tuple[str, str]:
+    require_system_ai()
+    if isinstance(system_preset, dict) or system_ai_configuration(system_preset)["value"] == "configured":
+        return run_system_ai_stream(prompt, system_preset, lambda delta: None)
     codex = codex_path()
     if not codex:
         raise RuntimeError("Codex is selected in Omarchy but the codex command is unavailable")
@@ -4812,32 +5234,27 @@ def run_system_ai(prompt: str, system_preset: str) -> tuple[str, str]:
 
 
 def run_system_ai_stream(
-    prompt: str, system_preset: str, on_delta: Callable[[str], None]
+    prompt: str, system_preset: str | dict[str, Any], on_delta: Callable[[str], None]
 ) -> tuple[str, str]:
     """Stream the final Codex agent message through the local app-server protocol."""
-    agent = selected_agent()
-    if agent != "codex":
-        raise RuntimeError(
-            f"Omarchy's selected agent is '{agent or 'unknown'}'. The System AI adapter currently supports Codex; "
-            "choose Codex as the Omarchy agent or select Local server in the widget settings."
-        )
+    require_system_ai()
     codex = codex_path()
     if not codex:
         raise RuntimeError("Codex is selected in Omarchy but the codex command is unavailable")
     selected = system_ai_configuration(system_preset)
+    configured = not selected["model"]
+    command = [codex, "app-server"]
+    if selected["model"]:
+        command.extend(["-c", "model=" + json.dumps(selected["model"])])
+    if selected["effort"]:
+        command.extend(["-c", "model_reasoning_effort=" + json.dumps(selected["effort"])])
+    command.append("--stdio")
+    provider_label = system_ai_provider_label(system_preset)
 
     ensure_dirs()
     try:
         process = subprocess.Popen(
-            [
-                codex,
-                "app-server",
-                "-c",
-                "model=" + json.dumps(selected["model"]),
-                "-c",
-                "model_reasoning_effort=" + json.dumps(selected["effort"]),
-                "--stdio",
-            ],
+            command,
             cwd=STATE_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -4933,7 +5350,7 @@ def run_system_ai_stream(
                             "method": "thread/start",
                             "params": {
                                 "cwd": str(STATE_DIR),
-                                "model": selected["model"],
+                                **({} if configured else {"model": selected["model"]}),
                                 "allowProviderModelFallback": False,
                                 "sandbox": "read-only",
                                 "approvalPolicy": "never",
@@ -4957,13 +5374,25 @@ def run_system_ai_stream(
                     thread_id = thread.get("id") if isinstance(thread, dict) else ""
                     if not thread_id:
                         raise RuntimeError("Codex did not return a streaming thread id")
+                    if configured or isinstance(system_preset, dict):
+                        # These fields describe the configuration Codex actually
+                        # resolved, including its chosen model provider.
+                        model = clean_profile_text(result.get("model"), 160)
+                        model_provider = clean_profile_text(result.get("modelProvider"), 80)
+                        effort = clean_profile_text(result.get("reasoningEffort"), 30)
+                        if model:
+                            provider_label = "System AI · Codex · " + model
+                            if model_provider:
+                                provider_label += " · " + model_provider
+                            if effort:
+                                provider_label += " · " + effort
                     send(
                         {
                             "id": 3,
                             "method": "turn/start",
                             "params": {
                                 "threadId": thread_id,
-                                "effort": selected["effort"],
+                                **({"effort": selected["effort"]} if selected["effort"] else {}),
                                 "input": [{"type": "text", "text": prompt}],
                             },
                         }
@@ -5028,7 +5457,7 @@ def run_system_ai_stream(
             raise RuntimeError(f"Codex returned no summary text{suffix}")
         if not streamed_parts:
             on_delta(answer)
-        return answer, system_ai_provider_label(selected["value"])
+        return answer, provider_label
     finally:
         try:
             if process.stdin:
@@ -5195,7 +5624,7 @@ def run_ai(
     provider: str,
     local_url: str,
     local_model: str,
-    system_preset: str,
+    system_preset: str | dict[str, Any],
 ) -> tuple[str, str]:
     if provider == "off":
         raise RuntimeError("AI is disabled in your curation profile")
@@ -5209,7 +5638,7 @@ def run_ai_stream(
     provider: str,
     local_url: str,
     local_model: str,
-    system_preset: str,
+    system_preset: str | dict[str, Any],
     on_delta: Callable[[str], None],
 ) -> tuple[str, str]:
     if provider == "off":
@@ -5239,7 +5668,7 @@ def journalistic_summary_skill() -> str:
 
 
 def summary_provider_details(
-    provider: str, local_model: str, system_preset: str
+    provider: str, local_model: str, system_preset: str | dict[str, Any]
 ) -> tuple[str, str]:
     if provider == "off":
         raise RuntimeError("AI is disabled in your curation profile")
@@ -5248,14 +5677,22 @@ def summary_provider_details(
         if not model:
             raise ValueError("Local AI model is empty")
         return f"local:{model}:{SUMMARY_PROMPT_VERSION}", f"Local AI · {model}"
+    require_system_ai()
     agent = selected_agent()
     selected = system_ai_configuration(system_preset)
-    label = system_ai_provider_label(selected["value"]) if agent == "codex" \
+    label = system_ai_provider_label(system_preset) if agent == "codex" \
         else f"System AI · {agent or 'unavailable'}"
     return (
         f"system:{agent}:{selected['model']}:{selected['effort']}:{SUMMARY_PROMPT_VERSION}",
         label,
     )
+
+
+def summary_cache_allowed(provider: str, system_preset: str | dict[str, Any]) -> bool:
+    # Configured defaults can change outside PYIN, including provider/model and
+    # managed config layers. Do not replay a result under a guessed identity.
+    return provider != "system" or (not isinstance(system_preset, dict)
+        and system_ai_configuration(system_preset)["value"] != "configured")
 
 
 def summary_prompt(row: sqlite3.Row, article_id_value: str) -> str:
@@ -5297,14 +5734,15 @@ def summarize(
     provider: str,
     local_url: str,
     local_model: str,
-    system_preset: str,
+    system_preset: str | dict[str, Any],
     fresh: bool,
 ) -> dict[str, Any]:
     row = article_row(article_id_value)
     provider_key, provider_display = summary_provider_details(
         provider, local_model, system_preset
     )
-    if not fresh and row["ai_summary"] and row["ai_provider"] == provider_key:
+    if (summary_cache_allowed(provider, system_preset) and not fresh
+            and row["ai_summary"] and row["ai_provider"] == provider_key):
         return {
             "ok": True,
             "text": row["ai_summary"],
@@ -5344,7 +5782,7 @@ def summarize_stream(
     provider: str,
     local_url: str,
     local_model: str,
-    system_preset: str,
+    system_preset: str | dict[str, Any],
     fresh: bool,
 ) -> int:
     """Emit a summary as newline-delimited status, delta, and completion events."""
@@ -5353,7 +5791,8 @@ def summarize_stream(
         provider, local_model, system_preset
     )
     cached = bool(
-        not fresh and row["ai_summary"] and row["ai_provider"] == provider_key
+        summary_cache_allowed(provider, system_preset) and not fresh
+        and row["ai_summary"] and row["ai_provider"] == provider_key
     )
     emit_stream_event(
         "meta",
@@ -5424,7 +5863,7 @@ def ask_news(
     provider: str,
     local_url: str,
     local_model: str,
-    system_preset: str,
+    system_preset: str | dict[str, Any],
 ) -> dict[str, Any]:
     query = query.strip()
     if not query:
@@ -5775,10 +6214,9 @@ def doctor() -> dict[str, Any]:
         "setup_version": int(setup.get("version", SETUP_PROFILE_VERSION)),
         "reading_minutes": int(setup.get("reading_minutes", 15)),
         "ai_mode": str(setup.get("ai", {}).get("mode", "system")),
-        "system_ai": system_ai_configuration(
-            str(setup.get("ai", {}).get("system_preset", DEFAULT_SYSTEM_AI_PRESET))
-        ),
+        "system_ai": profile_system_ai_choice(setup.get("ai", {})),
         "system_agent": agent or "none",
+        "system_ai_status": system_ai_status(),
         "system_ai_ready": agent == "codex" and bool(codex_path()),
         "codex": codex_path(),
     }
@@ -5786,13 +6224,29 @@ def doctor() -> dict[str, Any]:
 
 def add_ai_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--provider", choices=("system", "local", "off"), default="system")
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--system-preset",
         choices=tuple(SYSTEM_AI_PRESET_BY_VALUE),
-        default=DEFAULT_SYSTEM_AI_PRESET,
+        default=None, help=argparse.SUPPRESS,
     )
+    selection.add_argument("--system-model", default=None, help="PYIN model override; empty uses agent default")
+    parser.add_argument("--system-effort", default=None, help="Optional reasoning override")
     parser.add_argument("--local-url", default="http://127.0.0.1:11434/v1")
     parser.add_argument("--local-model", default="llama3.2:3b")
+
+
+def ai_choice_from_args(args: argparse.Namespace) -> str | dict[str, str]:
+    if args.system_preset is not None:
+        if args.system_effort is not None:
+            raise ValueError("use --system-model with --system-effort")
+        return args.system_preset
+    saved = profile_system_ai_choice(load_setup_profile()["ai"])
+    return system_ai_configuration({
+        "model": saved["model"] if args.system_model is None else args.system_model,
+        "effort": (saved["effort"] if args.system_model is None else "")
+            if args.system_effort is None else args.system_effort,
+    })
 
 
 def related_ids_from_json(value: str) -> list[str]:
@@ -5843,6 +6297,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     article_parser.add_argument("--id", required=True, metavar="ARTICLE_ID")
 
+    event_parser = sub.add_parser("event", help="Read cached event coverage without marking it seen")
+    event_parser.add_argument("--article-id", required=True)
+    event_seen_parser = sub.add_parser("event-seen", help="Acknowledge a displayed event snapshot")
+    event_seen_parser.add_argument("--id", required=True)
+    event_seen_parser.add_argument("--through", required=True, type=int)
+
     preferences_parser = sub.add_parser("preferences", help="Read or update persistent topic preferences")
     preferences_parser.add_argument("--set-topics", default=None, help="JSON array of topic values")
 
@@ -5861,7 +6321,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--system-ai-preset",
         choices=tuple(SYSTEM_AI_PRESET_BY_VALUE),
         default=None,
-        help="Choose PYIN's Codex model and reasoning-effort preset",
+        help=argparse.SUPPRESS,
     )
     setup_action.add_argument(
         "--navigation-json",
@@ -5873,6 +6333,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="JSON object with the optional footer link label and URL",
     )
+
+    setup_action.add_argument("--system-ai-model-json", default=None,
+                              help="Model and optional effort for PYIN; empty model uses agent default")
+    models_parser = sub.add_parser("ai-models", help="Discover the selected agent's models without inference")
+    models_parser.add_argument("--refresh", action="store_true")
 
     profile_parser = sub.add_parser("profile", help="Inspect or reset the local curation profile")
     profile_parser.add_argument(
@@ -5996,9 +6461,18 @@ def main(argv: list[str] | None = None) -> int:
             return emit(search_articles(args.query, args.limit))
         if args.command == "article":
             return emit(get_article(args.id))
+        if args.command == "event":
+            return emit(event_coverage(args.article_id))
+        if args.command == "event-seen":
+            return emit(mark_event_seen(args.id, args.through))
         if args.command == "preferences":
             return emit(preferences(args.set_topics))
+        if args.command == "ai-models":
+            result = ai_models(args.refresh)
+            return emit(result, 0 if result["ok"] else 1)
         if args.command == "setup":
+            if args.system_ai_model_json is not None:
+                return emit(set_system_ai_model(args.system_ai_model_json))
             if args.back_action is not None:
                 return emit(set_article_back_action(args.back_action))
             if args.system_ai_preset is not None:
@@ -6060,7 +6534,7 @@ def main(argv: list[str] | None = None) -> int:
                         args.provider,
                         args.local_url,
                         args.local_model,
-                        args.system_preset,
+                        ai_choice_from_args(args),
                         args.fresh,
                     )
                 except Exception as exc:
@@ -6073,7 +6547,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.provider,
                 args.local_url,
                 args.local_model,
-                args.system_preset,
+                ai_choice_from_args(args),
                 args.fresh,
             ))
         if args.command == "ask":
@@ -6082,7 +6556,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.provider,
                 args.local_url,
                 args.local_model,
-                args.system_preset,
+                ai_choice_from_args(args),
             ))
         if args.command == "updates":
             if args.install:

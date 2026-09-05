@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import qs.Commons
 
 Item {
@@ -21,12 +22,57 @@ Item {
   property int nextLetter: 0
   property bool flipping: false
   property bool showingNews: false
+  property bool overworked: false
+  property int prankStep: 0
+  property var recentClicks: []
+  property real nextPrankAt: 0
+  readonly property string prankText: overworked
+    ? "Breaking: local reader keeps poking sign." : ""
   readonly property bool hovered: hitArea.containsMouse
 
   signal clicked()
 
   implicitWidth: flapRow.implicitWidth
   implicitHeight: flapRow.implicitHeight
+
+  function handleClick() {
+    if (!root.active || !root.enabled || root.loading) return
+    var now = clickClock.elapsedMs()
+    if (!root.overworked && now >= root.nextPrankAt) {
+      var clicks = root.recentClicks.filter(function(timestamp) { return now - timestamp < 4000 })
+      clicks.push(now)
+      root.recentClicks = clicks
+      if (clicks.length >= 7) {
+        root.recentClicks = []
+        root.nextPrankAt = now + 30000
+        root.stopFlips()
+        root.forceWord("PYIN")
+        root.overworked = true
+        root.prankStep = 0
+        if (root.animate) root.flipTo("NEWS")
+        else prankHoldTimer.restart()
+      }
+    }
+    // The usual About action still runs. replay() leaves the prank alone.
+    root.clicked()
+  }
+
+  function stopFlips() {
+    idleTimer.stop()
+    returnTimer.stop()
+    loadingLeadTimer.stop()
+    loadingHoldTimer.stop()
+    cascadeTimer.stop()
+    settleTimer.stop()
+    prankHoldTimer.stop()
+  }
+
+  function finishPrank() {
+    root.stopFlips()
+    root.overworked = false
+    root.forceWord("PYIN")
+    root.schedule(false)
+  }
 
   function forceWord(word) {
     var value = String(word || "PYIN").slice(0, 4)
@@ -42,13 +88,13 @@ Item {
   function schedule(initial) {
     idleTimer.stop()
     if (!root.active || !root.animate || !root.autoAnimate
-        || root.loading || root.flipping) return
+        || root.loading || root.flipping || root.overworked) return
     idleTimer.interval = initial ? 9000 : 50000 + Math.floor(Math.random() * 40000)
     idleTimer.restart()
   }
 
   function flipTo(word) {
-    if (!root.active || root.flipping) return
+    if (!root.active || !root.animate || root.flipping) return
     root.destinationWord = String(word || "PYIN").slice(0, 4)
     root.nextLetter = 0
     root.flipping = true
@@ -64,7 +110,7 @@ Item {
   }
 
   function replay() {
-    if (!root.active) return
+    if (!root.active || root.overworked || root.loading) return
     idleTimer.stop()
     returnTimer.stop()
     if (!root.animate) {
@@ -76,12 +122,9 @@ Item {
 
   onActiveChanged: {
     if (!active) {
-      idleTimer.stop()
-      returnTimer.stop()
-      loadingLeadTimer.stop()
-      loadingHoldTimer.stop()
-      cascadeTimer.stop()
-      settleTimer.stop()
+      root.stopFlips()
+      root.overworked = false
+      root.recentClicks = []
       forceWord("PYIN")
     } else if (loading && animate) {
       forceWord("PYIN")
@@ -99,11 +142,11 @@ Item {
 
   onAnimateChanged: {
     if (!animate) {
-      idleTimer.stop()
-      returnTimer.stop()
-      loadingLeadTimer.stop()
-      loadingHoldTimer.stop()
+      root.stopFlips()
       forceWord("PYIN")
+      if (root.overworked) prankHoldTimer.restart()
+    } else if (root.overworked) {
+      root.finishPrank()
     } else if (active && loading) {
       forceWord("PYIN")
       loadingLeadTimer.restart()
@@ -113,21 +156,33 @@ Item {
   }
 
   onLoadingChanged: {
-    idleTimer.stop()
-    returnTimer.stop()
-    loadingLeadTimer.stop()
-    loadingHoldTimer.stop()
-    cascadeTimer.stop()
-    settleTimer.stop()
+    root.stopFlips()
+    root.overworked = false
+    root.recentClicks = []
     forceWord("PYIN")
     if (loading && active && animate) loadingLeadTimer.restart()
     else if (active) schedule(false)
   }
 
   Component.onCompleted: {
+    clickClock.restartMs()
     forceWord("PYIN")
     if (loading && active && animate) loadingLeadTimer.restart()
     else schedule(true)
+  }
+
+  ElapsedTimer { id: clickClock }
+
+  Timer {
+    id: prankHoldTimer
+    interval: root.animate ? 600 : 1800
+    repeat: false
+    onTriggered: {
+      if (root.animate && root.prankStep === 2) {
+        root.prankStep = 3
+        root.flipTo("PYIN")
+      } else root.finishPrank()
+    }
   }
 
   Timer {
@@ -138,19 +193,25 @@ Item {
 
   Timer {
     id: cascadeTimer
-    interval: 82
+    interval: root.overworked ? 32 : 82
     repeat: false
     onTriggered: root.flipNext()
   }
 
   Timer {
     id: settleTimer
-    interval: 360
+    interval: root.overworked ? 170 : 360
     repeat: false
     onTriggered: {
       root.showingNews = root.destinationWord === "NEWS"
       root.flipping = false
-      if (root.loading) loadingHoldTimer.restart()
+      if (root.overworked) {
+        if (root.prankStep < 2) {
+          root.prankStep++
+          root.flipTo(root.prankStep === 1 ? "PYIN" : "NOPE")
+        } else if (root.prankStep === 2) prankHoldTimer.restart()
+        else root.finishPrank()
+      } else if (root.loading) loadingHoldTimer.restart()
       else if (root.showingNews) returnTimer.restart()
       else root.schedule(false)
     }
@@ -266,7 +327,7 @@ Item {
             property: "yScale"
             from: 1
             to: 0.035
-            duration: 92
+            duration: root.overworked ? 45 : 92
             easing.type: Easing.InQuad
           }
           ScriptAction { script: cell.glyph = cell.pendingGlyph }
@@ -275,7 +336,7 @@ Item {
             property: "yScale"
             from: 0.035
             to: 1
-            duration: 142
+            duration: root.overworked ? 75 : 142
             easing.type: Easing.OutBack
           }
         }
@@ -290,6 +351,6 @@ Item {
     enabled: root.enabled
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onClicked: root.clicked()
+    onClicked: root.handleClick()
   }
 }

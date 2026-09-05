@@ -22,8 +22,11 @@ Flickable {
   property string sourceMixText: ""
   property string aiProvider: "system"
   property string aiSummary: ""
-  property string systemAiPreset: "balanced"
-  property var systemAiOptions: []
+  property string systemAiModel: ""
+  property string systemAiEffort: ""
+  property var aiModelCatalog: ({})
+  property bool aiModelsLoading: false
+  property bool systemAiAvailable: true
   property bool articleBackMarksRead: true
   property string footerLinkLabel: ""
   property string footerLinkUrl: ""
@@ -70,7 +73,8 @@ Flickable {
   signal navigationRequested(string item, bool enabled)
   signal backBehaviorRequested(bool enabled)
   signal footerLinkRequested(string label, string url)
-  signal aiPresetRequested(string preset)
+  signal aiModelRequested(string model, string effort)
+  signal aiModelsRequested(bool refresh)
   signal interestRemoveRequested(string term, string scope)
   signal exportRequested()
   signal importRequested()
@@ -475,7 +479,7 @@ Flickable {
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: "AI TL;DR SPEED"
+        text: "AI MODEL PREFERENCE"
         color: page.foreground
         font.family: page.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -492,30 +496,21 @@ Flickable {
         wrapMode: Text.Wrap
       }
 
-      Flow {
-        visible: page.aiProvider === "system"
+      AiModelPicker {
         width: parent.width
-        spacing: Style.spacing.sm
-
-        Repeater {
-          model: page.systemAiOptions
-
-          Button {
-            required property var modelData
-            text: String(modelData.label || "Preset")
-            tooltipText: String(modelData.model_label || modelData.model || "") + " · "
-              + String(modelData.effort || "low") + " reasoning · "
-              + String(modelData.description || "")
-            foreground: page.foreground
-            accent: page.accent
-            fontFamily: page.fontFamily
-            bordered: true
-            focusable: true
-            selected: page.systemAiPreset === String(modelData.value)
-            enabled: !page.aiPresetBusy
-            onClicked: page.aiPresetRequested(String(modelData.value))
-          }
-        }
+        visible: page.aiProvider === "system" && page.systemAiAvailable
+        selectedModel: page.systemAiModel
+        selectedEffort: page.systemAiEffort
+        catalog: page.aiModelCatalog
+        loading: page.aiModelsLoading
+        saving: page.aiPresetBusy
+        foreground: page.foreground
+        background: page.background
+        accent: page.accent
+        dim: page.dim
+        fontFamily: page.fontFamily
+        onDiscoveryRequested: function(refresh) { page.aiModelsRequested(refresh) }
+        onSelectionRequested: function(model, effort) { page.aiModelRequested(model, effort) }
       }
     }
 
@@ -1158,7 +1153,7 @@ Flickable {
         width: parent.width
         textFormat: Text.PlainText
         text: page.confirmReset
-          ? "Press Confirm reset again to erase inferred reading, Show Less, viewed-history, and exposure data. Explicit topics, menu choices, saved stories, alerts, and source settings remain."
+          ? "Press Confirm reset again to erase inferred reading, Show Less, viewed-history, event visits, and exposure data. Explicit topics, menu choices, saved stories, alerts, and source settings remain."
           : "Reset affects inferred and viewed-history data only. Explicit choices and library items remain."
         color: page.dim
         font.family: page.fontFamily

@@ -501,6 +501,357 @@ function readingFixture() {
   return { ...f, signals, engaged: () => signals.filter(value => value[1] === 'engaged') };
 }
 
+function eventFixture() {
+  const f = readingFixture();
+  f.context.resultScroll = { contentY: 120 };
+  f.context.eventPage = { position: 0, resetPosition() { this.position = 0; } };
+  f.context.keyCatcher = { forceActiveFocus() {} };
+  f.context.searchField = { text: '' };
+  f.root.returnViewMode = 'history';
+  f.root.articleBackMarksRead = true;
+  f.root.loadHistory = () => {};
+  f.root.eventPayload = {
+    ok: true, event_id: 'event-a', seen_through: 10, first_visit: false,
+    articles: [{ id: 'a', title: 'Story A', source: 'Alpha', is_new: false },
+      { id: 'b', title: 'Story B', source: 'Beta', is_new: true }],
+    new_count: 1, article_count: 2, source_count: 2,
+  };
+  return f;
+}
+
+test('opening Event Desk pauses engagement and acknowledges only a displayed snapshot', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  assert.equal(f.root.viewMode, 'event');
+  assert.equal(f.root.readingArticleId, '');
+  assert.deepEqual(plain(f.processes.eventProc.command), ['/test/chuchua-news', 'event', '--article-id', 'a']);
+  f.processes.eventProc.complete(f.root.eventPayload);
+  assert.equal(f.processes.eventSeenProc.running, false);
+  f.flush();
+  assert.deepEqual(plain(f.processes.eventSeenProc.command),
+    ['/test/chuchua-news', 'event-seen', '--id', 'event-a', '--through', '10']);
+  f.processes.eventSeenProc.complete({ ok: true });
+  f.flush();
+  assert.equal(f.root.eventData.new_count, 1, 'this visit keeps its original new markers');
+  assert.deepEqual(f.signals, [['a', 'open']]);
+});
+
+test('leaving before rendering does not acknowledge the event', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.root.navigateBack();
+  f.flush();
+  assert.equal(f.root.viewMode, 'result');
+  assert.equal(f.context.resultScroll.contentY, 120);
+  assert.equal(f.processes.eventSeenProc.running, false);
+});
+
+test('closing the window before rendering does not acknowledge the event', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.root.opened = false;
+  f.flush();
+  assert.equal(f.processes.eventSeenProc.running, false);
+});
+
+test('unfocused and minimized event pages wait for a visible focused visit', () => {
+  for (const state of ['unfocused', 'minimized']) {
+    const f = eventFixture();
+    f.root.showEventDesk();
+    if (state === 'unfocused') f.context.windowContent.Window.active = false;
+    else f.context.windowContent.Window.visibility = 3;
+    f.processes.eventProc.complete(f.root.eventPayload);
+    f.flush();
+    assert.equal(f.processes.eventSeenProc.running, false);
+    f.context.windowContent.Window.active = true;
+    f.context.windowContent.Window.visibility = 2;
+    f.flush();
+    assert.equal(f.processes.eventSeenProc.running, true);
+    f.root.queueEventVisit();
+    assert.deepEqual(plain(f.root.eventSeenQueue), []);
+  }
+});
+
+test('a stale event response cannot replace or acknowledge a newly requested event', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.root.navigateBack();
+  f.root.showArticle({ id: 'c', title: 'Story C' });
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  assert.deepEqual(plain(f.root.eventData), {});
+  assert.equal(f.processes.eventSeenProc.running, false);
+  assert.equal(f.processes.eventProc.command.at(-1), 'c');
+  f.processes.eventProc.complete({ ...f.root.eventPayload, event_id: 'event-c', seen_through: 22 });
+  f.flush();
+  assert.equal(f.root.eventData.event_id, 'event-c');
+  assert.equal(f.processes.eventSeenProc.command.at(-1), '22');
+});
+
+test('timeline report navigation preserves position and does not auto-hide reports', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  f.context.eventPage.position = 315;
+  f.root.showEventArticle(f.root.eventData.articles[1]);
+  assert.equal(f.root.activeArticleId, 'b');
+  assert.equal(f.root.returnViewMode, 'history');
+  f.root.navigateBack();
+  assert.equal(f.root.viewMode, 'event');
+  assert.equal(f.context.eventPage.position, 315);
+  assert.equal(f.processes.readMutationProc.running, false);
+  f.root.navigateBack();
+  assert.equal(f.root.viewMode, 'result');
+  assert.equal(f.root.activeArticleId, 'a');
+  assert.equal(f.context.resultScroll.contentY, 120);
+  assert.deepEqual(f.signals, [['a', 'open'], ['b', 'open']]);
+});
+
+test('event opened directly from a library returns to that library', () => {
+  const f = eventFixture();
+  f.root.viewMode = 'bookmarks';
+  f.root.selectedBookmark = { id: 'saved', title: 'Saved story' };
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  f.root.showEventArticle(f.root.eventData.articles[0]);
+  assert.equal(f.root.returnViewMode, 'bookmarks');
+  f.root.navigateBack();
+  f.root.navigateBack();
+  assert.equal(f.root.viewMode, 'bookmarks');
+});
+
+test('failed event helper starts and error exits allow retry without recording a visit', () => {
+  for (const failure of ['start', 'exit', 'crash']) {
+    const f = eventFixture();
+    f.root.showEventDesk();
+    if (failure === 'start') f.processes.eventProc.failToStart();
+    else f.processes.eventProc.complete({ ...f.root.eventPayload }, failure === 'exit' ? 1 : 0,
+      failure === 'crash' ? 1 : 0);
+    f.flush();
+    assert.equal(f.root.eventData.ok, false);
+    assert.equal(f.processes.eventSeenProc.running, false);
+    f.root.loadEventDesk();
+    f.processes.eventProc.complete(f.root.eventPayload);
+    f.flush();
+    assert.equal(f.root.eventData.ok, true);
+    assert.equal(f.processes.eventSeenProc.running, true);
+  }
+});
+
+test('failed visit writes release the queue and explain repeated new markers', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  f.root.eventSeenQueue = [{ id: 'second-event', through: 30 }];
+  f.processes.eventSeenProc.failToStart();
+  f.flush();
+  assert.match(f.root.eventVisitError, /could not be saved/);
+  assert.equal(f.root.activeEventSeen.id, 'second-event');
+  f.processes.eventSeenProc.complete({ ok: true });
+  f.flush();
+  assert.equal(f.root.activeEventSeen, null);
+});
+
+test('empty filtered coverage cannot record a visit', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete({ ok: true, event_id: 'a', articles: [], seen_through: 0 });
+  f.flush();
+  assert.equal(f.processes.eventSeenProc.running, false);
+});
+
+test('event metadata changes reach the timeline and the original report', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  f.root.patchEventArticle('a', { bookmarked: true, read: true });
+  assert.equal(f.root.eventData.articles[0].bookmarked, true);
+  f.root.patchEventArticle('b', { dismissed: true });
+  assert.equal(f.root.eventData.article_count, 1);
+  assert.equal(f.root.eventData.source_count, 1);
+  assert.equal(f.root.eventData.new_count, 0);
+  f.root.navigateBack();
+  assert.equal(f.root.activeArticle.bookmarked, true);
+  assert.equal(f.root.activeArticle.read, true);
+});
+
+test('reset waits for pending visit writes and blocks event entry during reset', () => {
+  const f = eventFixture();
+  f.root.showEventDesk();
+  f.processes.eventProc.complete(f.root.eventPayload);
+  f.flush();
+  f.root.confirmProfileReset = true;
+  f.root.resetProfileLearning();
+  assert.equal(f.processes.profileResetProc.running, false);
+  f.root.navigateBack();
+  f.processes.profileResetProc.running = true;
+  f.root.showEventDesk();
+  assert.equal(f.root.viewMode, 'result');
+});
+
+function eventPageFixture() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'EventDeskPage.qml'), 'utf8');
+  const later = [];
+  const timeline = {
+    contentY: 90,
+    forceLayout() {}, returnToBounds() {},
+    positionViewAtBeginning() { this.contentY = -146; },
+  };
+  const page = {
+    coverage: {}, displayedEventId: 'event-a', modelRevision: 0,
+    selectedIndex: 2, restorePending: false, restorePosition: 0,
+  };
+  let articles = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  Object.defineProperty(page, 'articles', {
+    get() { return articles; },
+    // Native ListView resets its position on JS-array model replacement.
+    set(values) { articles = values; timeline.contentY = -146; },
+  });
+  const context = vm.createContext({ page, timeline, Qt: { callLater(fn) { later.push(fn); } } });
+  for (const match of source.matchAll(/^  (function (\w+)\([^\n]*\) \{[\s\S]*?^  \})/gm))
+    page[match[2]] = vm.runInContext(`(${match[1]})`, context);
+  for (const name of [...Object.keys(page), 'articles'])
+    Object.defineProperty(context, name, { get() { return page[name]; }, set(value) { page[name] = value; } });
+  const handler = source.match(/^  onCoverageChanged: (\{[\s\S]*?^  \})/m);
+  assert.ok(handler);
+  return {
+    page, timeline,
+    update(identity, values) {
+      page.coverage = { ok: true, event_id: identity, articles: values };
+      vm.runInContext(`(function() { ${handler[1]} })`, context)();
+    },
+    flush() { while (later.length) later.shift()(); },
+  };
+}
+
+test('timeline model updates restore scroll position and selected report after native reset', () => {
+  const f = eventPageFixture();
+  f.update('event-a', [{ id: 'a' }, { id: 'c', read: true }]);
+  assert.equal(f.timeline.contentY, -146);
+  f.flush();
+  assert.equal(f.timeline.contentY, 90);
+  assert.equal(f.page.selectedIndex, 1);
+});
+
+test('overlapping metadata updates retain the original position until delegates settle', () => {
+  const f = eventPageFixture();
+  f.update('event-a', [{ id: 'a' }, { id: 'b' }, { id: 'c', read: true }]);
+  f.update('event-a', [{ id: 'a' }, { id: 'b' }, { id: 'c', read: true, bookmarked: true }]);
+  f.flush();
+  assert.equal(f.timeline.contentY, 90);
+  assert.equal(f.page.selectedIndex, 2);
+});
+
+test('new or empty events invalidate a pending scroll restoration', () => {
+  for (const identity of ['event-b', 'event-a']) {
+    const f = eventPageFixture();
+    f.update('event-a', [{ id: 'a' }, { id: 'b' }]);
+    f.update(identity, identity === 'event-a' ? [] : [{ id: 'other' }]);
+    f.flush();
+    assert.equal(f.timeline.contentY, -146);
+    assert.equal(f.page.selectedIndex, -1);
+  }
+});
+
+test('unsupported System AI explains the choice without opening or launching a summary', () => {
+  const { root, launches } = fixture();
+  root.aiEnabled = true;
+  root.aiProvider = 'system';
+  root.systemAiStatus = { available: false, message: 'Claude Code is selected; adapter unavailable.' };
+  root.viewMode = 'feed';
+  root.summarizeArticle({ id: 'story', title: 'A story' });
+  assert.equal(root.statusText, root.systemAiStatus.message);
+  assert.equal(root.viewMode, 'feed');
+  assert.equal(root.activeArticle, null);
+  assert.deepEqual(launches, []);
+  root.aiBusy = true;
+  root.statusText = 'Summary in progress';
+  root.summarizeArticle({ id: 'another' });
+  assert.equal(root.statusText, 'Summary in progress');
+});
+
+test('profile refresh updates agent availability while preserving setup and saved preference', () => {
+  const { root, processes } = fixture();
+  root.setupData = { profile: { ai: { system_model: 'saved-model', system_effort: 'low' } }, catalogs: { retained: true } };
+  processes.profileProc.running = true;
+  processes.profileProc.complete({ ok: true, system_ai_status: { agent: 'claude', available: false } });
+  assert.deepEqual(plain(root.setupData.system_ai_status), { agent: 'claude', available: false });
+  assert.equal(root.setupData.profile.ai.system_model, 'saved-model');
+  assert.equal(root.setupData.catalogs.retained, true);
+  processes.profileProc.running = true;
+  processes.profileProc.complete({ ok: true, system_ai_status: { agent: 'codex', available: true } });
+  assert.equal(root.setupData.system_ai_status.available, true);
+});
+
+test('summary command forwards configured preference without inventing a model override', () => {
+  const { root } = fixture();
+  root.aiProvider = 'system';
+  root.systemAiModel = '';
+  root.systemAiEffort = '';
+  root.localAiUrl = 'http://127.0.0.1:11434/v1';
+  root.localAiModel = 'local-model';
+  assert.deepEqual(plain(root.aiCommand('summarize', ['--id', 'story', '--stream'])), [
+    '/test/chuchua-news', 'summarize', '--id', 'story', '--stream',
+    '--provider', 'system', '--system-model', '', '--system-effort', '',
+    '--local-url', 'http://127.0.0.1:11434/v1', '--local-model', 'local-model',
+  ]);
+});
+
+test('model discovery runs only on request and guards concurrent or unsupported launches', () => {
+  const { root, launches, processes } = fixture();
+  root.systemAiStatus = { agent: 'codex', available: true };
+  assert.deepEqual(launches, []);
+  root.loadAiModels(false);
+  root.loadAiModels(false);
+  assert.deepEqual(launches.map(x => x.command), [['/test/chuchua-news', 'ai-models']]);
+  processes.aiModelsProc.complete({ ok: true, agent: 'codex', models: [{ value: 'new-model' }] });
+  root.loadAiModels(true);
+  assert.deepEqual(launches[1].command, ['/test/chuchua-news', 'ai-models', '--refresh']);
+  processes.aiModelsProc.complete({ ok: false, agent: 'codex', models: [{ value: 'new-model' }], stale: true, error: 'Retry' }, 1);
+  assert.equal(root.aiModelCatalog.models[0].value, 'new-model');
+  assert.equal(root.aiModelCatalog.error, 'Retry');
+  root.systemAiStatus.available = false;
+  root.loadAiModels(true);
+  assert.equal(launches.length, 2);
+});
+
+test('failed model discovery starts allow retry and stale agent responses are discarded', () => {
+  const f = fixture();
+  const { root, processes } = f;
+  root.systemAiStatus = { agent: 'codex', available: true };
+  root.loadAiModels(false);
+  processes.aiModelsProc.failToStart();
+  f.flush();
+  assert.match(root.aiModelCatalog.error, /Could not load models/);
+  root.loadAiModels(false);
+  root.aiModelCatalogRevision++;
+  root.aiModelCatalog = {};
+  processes.aiModelsProc.complete({ ok: true, agent: 'codex', models: [{ value: 'stale' }] });
+  f.flush();
+  assert.deepEqual(root.aiModelCatalog, {});
+  root.loadAiModels(false);
+  processes.aiModelsProc.complete({ ok: false, agent: 'claude', models: [] }, 1);
+  assert.match(root.aiModelCatalog.error, /agent changed/);
+});
+
+test('saving a manual model uses structured arguments and failed writes preserve setup', () => {
+  const { root, processes, launches } = fixture();
+  root.systemAiModel = '';
+  root.systemAiEffort = '';
+  root.setupData = { profile: { ai: { system_model: '' } } };
+  root.setSystemAiModel('provider/future:v2', 'deeper');
+  assert.deepEqual(JSON.parse(launches[0].command[3]), { model: 'provider/future:v2', effort: 'deeper' });
+  processes.systemAiPresetProc.complete({ ok: true, profile: { ai: { system_model: 'wrong' } } }, 1);
+  assert.equal(root.setupData.profile.ai.system_model, '');
+});
+
 test('reading engagement requires twelve focused seconds and is emitted once', () => {
   const f = readingFixture();
   f.advance(11999);

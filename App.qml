@@ -64,18 +64,23 @@ Item {
   readonly property string aiProvider:
     root.setupComplete ? String(setupAi.mode || "system")
       : (String(setting("aiProvider", "System AI")) === "Local server" ? "local" : "system")
-  readonly property var systemAiOptions: setupData && setupData.catalogs
-    && setupData.catalogs.system_ai ? setupData.catalogs.system_ai : [
-      { value: "fast", label: "Fast", model: "gpt-5.6-luna", model_label: "GPT-5.6 Luna", effort: "low", description: "Quickest response for routine source-bounded summaries" },
-      { value: "balanced", label: "Balanced", model: "gpt-5.6-sol", model_label: "GPT-5.6 Sol", effort: "low", description: "Flagship model with light reasoning for speed and accuracy" },
-      { value: "thorough", label: "Thorough", model: "gpt-5.6-sol", model_label: "GPT-5.6 Sol", effort: "high", description: "More reasoning for dense, ambiguous, or consequential stories" }
-    ]
-  readonly property string systemAiPreset: String(setupAi.system_preset || "balanced")
-  readonly property var activeSystemAiOption: root.systemAiOption(root.systemAiPreset)
-  readonly property string systemAiPresetLabel: String(activeSystemAiOption.label || "Balanced")
-  readonly property string systemAiModel: String(activeSystemAiOption.model || "gpt-5.6-sol")
-  readonly property string systemAiModelLabel: String(activeSystemAiOption.model_label || "GPT-5.6 Sol")
-  readonly property string systemAiEffort: String(activeSystemAiOption.effort || "low")
+  readonly property var systemAiStatus: setupData.system_ai_status || ({})
+  readonly property string systemAiModel: String(setupAi.system_model || "")
+  readonly property string systemAiEffort: String(setupAi.system_effort || "")
+  readonly property string systemAiModelLabel: systemAiModel || "Agent default"
+  readonly property string systemAiSummary: root.systemAiModel === ""
+    ? "Uses your configured model and reasoning. Each request generates a fresh summary."
+    : root.systemAiModel + " · " + (root.systemAiEffort || "agent default")
+      + " reasoning. Used only by PYIN; fresh summary per request."
+  property var aiModelCatalog: ({})
+  property int aiModelRequestRevision: 0
+  property int aiModelCatalogRevision: 0
+  property string aiModelRequestAgent: ""
+  readonly property string systemAiAgentKey: String(systemAiStatus.agent || "") + ":" + String(systemAiStatus.available)
+  onSystemAiAgentKeyChanged: {
+    root.aiModelCatalogRevision++
+    root.aiModelCatalog = ({})
+  }
   readonly property string localAiUrl:
     root.setupComplete ? String(setupAi.local_url || "http://127.0.0.1:11434/v1")
       : String(setting("localAiUrl", "http://127.0.0.1:11434/v1"))
@@ -85,8 +90,8 @@ Item {
   readonly property bool aiEnabled: aiProvider !== "off"
   readonly property string aiLabel: aiProvider === "local"
     ? "Local · " + localAiModel : (aiProvider === "off" ? "AI disabled"
-      : "System AI · " + systemAiPresetLabel + " · " + systemAiModelLabel
-        + " · " + systemAiEffort)
+      : (root.systemAiStatus.available === false ? "System AI unavailable"
+        : "System AI · " + root.systemAiModelLabel))
   readonly property int feedLimit: root.setupComplete && setupData.story_limit
     ? Number(setupData.story_limit) : root.maxArticles
   readonly property bool compactDensity: Boolean(root.setupComplete
@@ -233,7 +238,18 @@ Item {
   property string tuneDirection: "more"
   property string tuneDuration: "temporary"
   property bool whySectionExpanded: false
-  property bool coverageSectionExpanded: false
+  property var eventData: ({})
+  property var eventOrigin: null
+  property bool eventArticleOpen: false
+  property string eventArticleId: ""
+  property int eventRevision: 0
+  property int activeEventRevision: 0
+  property bool eventLoadActive: false
+  property bool pendingEventLoad: false
+  property var eventSeenQueue: []
+  property var activeEventSeen: null
+  property string eventVisitError: ""
+  property bool eventVisitPending: false
   property int feedbackTargetIndex: 0
   property bool pendingImpressions: false
   property string helpQuery: ""
@@ -243,6 +259,14 @@ Item {
 
   onViewModeChanged: {
     root.syncReadingEngagement()
+    if (root.viewMode !== "event" && root.viewMode !== "result" && root.viewMode !== "about") {
+      root.eventArticleOpen = false
+      root.eventOrigin = null
+      root.eventRevision++
+      root.pendingEventLoad = false
+      root.eventVisitPending = false
+    }
+    if (root.viewMode === "event") Qt.callLater(function() { root.queueEventVisit() })
     if (root.viewMode === "feed") impressionTimer.restart()
     if (!root.isArticleContext()) root.closeActionHud()
   }
@@ -283,6 +307,7 @@ Item {
     { section: "NUMBER ROW", keys: "=", action: "Show more news about the selected article subject" },
 
     { section: "QWERTY ROW", keys: "q", action: "Close the app" },
+    { section: "QWERTY ROW", keys: "e", action: "Open Coverage: cached reporting in time order, with new arrivals since your last visit" },
     { section: "QWERTY ROW", keys: "r", action: "Check active RSS sources now; the far-right freshness chip shows age, progress, and the result" },
     { section: "QWERTY ROW", keys: "t / s", action: "Create an AI TL;DR for the selected story" },
     { section: "QWERTY ROW", keys: "i / click PYIN", action: "Open the story behind the name, the app, and chuchua.tech" },
@@ -342,7 +367,7 @@ Item {
     { option: "ALERT QUIET HOURS", effect: "Suppresses desktop notifications during the chosen hours. Matching stories can still appear in the feed." },
     { option: "ALERT DAILY LIMIT", effect: "Caps desktop notifications, not matching stories or their feed scores." },
     { option: "AI PROVIDER", effect: "Chooses System AI, a loopback local server, or no AI for requested TL;DRs. It never chooses the feed order." },
-    { option: "SYSTEM AI SPEED", effect: "Chooses Fast (Luna/low), Balanced (Sol/low), or Thorough (Sol/high) only for PYIN TL;DRs. It does not change the global Codex model or feed ranking." },
+    { option: "AI MODEL", effect: "Agent default follows Omarchy's selected agent and its configured model. Choose a discovered model or enter its name to override it only for PYIN. Reasoning options come from the agent. Each request generates a fresh summary; feed ranking stays local." },
     { option: "EXTRA INTEREST KEYWORDS", effect: "Adds explicit keyword boosts beyond the setup topic catalog." },
     { option: "LEARNING", effect: "When off, no new reading signals are recorded and existing inferred memory stops affecting ranking." },
     { option: "RETENTION", effect: "Controls how long ordinary cached articles and local learning history are kept. Saved stories are exempt." },
@@ -370,19 +395,13 @@ Item {
     readArticles.length > 0 && readIndex >= 0 && readIndex < readArticles.length
       ? readArticles[readIndex] : null
 
-  function systemAiOption(value) {
-    var key = String(value || "balanced")
-    for (var i = 0; i < root.systemAiOptions.length; i++)
-      if (String(root.systemAiOptions[i].value) === key)
-        return root.systemAiOptions[i]
-    return root.systemAiOptions.length > 0 ? root.systemAiOptions[0] : ({})
-  }
 
   function menuItemEnabled(item) {
     return root.navigationItems.indexOf(String(item)) !== -1
   }
 
   function navigationContext() {
+    if (root.viewMode === "event") return root.eventOrigin ? root.eventOrigin.context : "feed"
     if (root.viewMode === "result") return root.returnViewMode
     if (root.viewMode === "search") return "feed"
     if (root.viewMode === "read") return "history"
@@ -919,6 +938,10 @@ Item {
         root.readArticles = root.articlesWithViewState(root.readArticles, payload)
         if (root.activeArticle)
           root.activeArticle = root.articlesWithViewState([root.activeArticle], payload)[0]
+        root.patchEventArticle(payload.article_id, {
+          opened: Number(payload.opens || 0) > 0,
+          opens: Number(payload.opens || 0), last_opened_ts: payload.last_opened_ts
+        })
         root.pendingHistoryLoad = true
       }
       if (event.signal === "open" || payload.applied) openedReload.restart()
@@ -1068,14 +1091,17 @@ Item {
 
   function showArticle(article) {
     if (!article || root.aiCancelled) return
+    if (root.viewMode !== "result" && root.viewMode !== "event") {
+      root.eventOrigin = null
+      root.eventArticleOpen = false
+    }
     root.resetReadingEngagement("")
     root.resetAiPresentation()
     root.closeActionHud()
     root.whySectionExpanded = false
-    root.coverageSectionExpanded = false
     root.feedbackTargetIndex = 0
     root.learnArticle(article, "open")
-    if (root.viewMode !== "result")
+    if (root.viewMode !== "result" && root.viewMode !== "event")
       root.returnViewMode = root.viewMode === "bookmarks" ? "bookmarks"
         : (root.viewMode === "history" ? "history"
           : (root.viewMode === "read" ? "read"
@@ -1097,28 +1123,161 @@ Item {
     root.syncReadingEngagement()
   }
 
-  function showCoverageArticle(article) {
-    if (!article || !root.activeArticle) return
-    var members = [root.activeArticle]
-    var related = root.activeArticle.related_articles || []
-    for (var i = 0; i < related.length; i++) members.push(related[i])
-    var selected = ({})
-    for (var key in article) selected[key] = article[key]
-    selected.cluster_id = root.activeArticle.cluster_id || ""
-    selected.cluster_ids = root.activeArticle.cluster_ids || [String(article.id)]
-    selected.coverage_count = root.activeArticle.coverage_count || members.length
-    selected.coverage_sources = root.activeArticle.coverage_sources || []
-    selected.reason = "alternate coverage"
-    selected.why_text = "another publisher covering the same event"
-    selected.why = [{ label: "same event · alternate source", score: 0 }]
-    if (!selected.feedback_targets || selected.feedback_targets.length === 0)
-      selected.feedback_targets = root.activeArticle.feedback_targets || []
-    selected.related_articles = []
-    for (var j = 0; j < members.length; j++)
-      if (String(members[j].id) !== String(selected.id))
-        selected.related_articles.push(members[j])
-    root.showArticle(selected)
-    root.coverageSectionExpanded = true
+  function showEventDesk() {
+    if (root.aiBusy || profileResetProc.running) return
+    if (root.eventArticleOpen && root.viewMode === "result") {
+      root.returnToEventDesk()
+      return
+    }
+    var article = root.currentArticle()
+    if (!root.isArticleContext() || !article) return
+    root.eventOrigin = {
+      view: root.viewMode, context: root.navigationContext(),
+      article: root.activeArticle, articleId: root.activeArticleId,
+      title: root.resultTitle, text: root.resultText, url: root.resultUrl,
+      provider: root.resultProvider, kind: root.resultKind,
+      returnView: root.returnViewMode, scroll: resultScroll.contentY
+    }
+    root.closeActionHud()
+    root.eventRevision++
+    root.eventArticleId = String(article.id)
+    root.eventData = ({})
+    root.eventVisitError = ""
+    root.eventVisitPending = false
+    root.eventArticleOpen = false
+    root.viewMode = "event"
+    eventPage.resetPosition()
+    root.loadEventDesk()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function loadEventDesk() {
+    if (root.viewMode !== "event") return
+    if (eventProc.running || root.eventLoadActive) {
+      root.pendingEventLoad = true
+      return
+    }
+    root.pendingEventLoad = false
+    root.activeEventRevision = root.eventRevision
+    root.eventLoadActive = true
+    eventProc.command = [root.backendPath, "event", "--article-id", root.eventArticleId]
+    eventProc.running = true
+  }
+
+  function finishEventLoad(payload) {
+    if (!root.eventLoadActive) return
+    root.eventLoadActive = false
+    var revision = root.activeEventRevision
+    if (root.viewMode === "event" && revision === root.eventRevision) {
+      root.eventData = payload
+      root.statusText = payload.ok ? "Coverage · cached reporting · no AI used"
+        : String(payload.error || "Could not load event coverage")
+      if (payload.ok && Number(payload.seen_through) > 0) {
+        root.eventVisitPending = true
+        Qt.callLater(function() {
+          if (revision === root.eventRevision) root.queueEventVisit()
+        })
+      }
+    }
+    if (root.pendingEventLoad && root.viewMode === "event")
+      Qt.callLater(function() { root.loadEventDesk() })
+  }
+
+  function startNextEventSeen() {
+    if (eventSeenProc.running || root.activeEventSeen || root.eventSeenQueue.length === 0) return
+    root.activeEventSeen = root.eventSeenQueue[0]
+    root.eventSeenQueue = root.eventSeenQueue.slice(1)
+    eventSeenProc.command = [root.backendPath, "event-seen", "--id", root.activeEventSeen.id,
+      "--through", String(root.activeEventSeen.through)]
+    eventSeenProc.running = true
+  }
+
+  function queueEventVisit() {
+    if (!root.eventVisitPending || root.viewMode !== "event"
+        || !root.measurementWindowActive() || !root.eventData.ok) return
+    root.eventVisitPending = false
+    root.eventSeenQueue = root.eventSeenQueue.concat([{
+      id: String(root.eventData.event_id), through: Number(root.eventData.seen_through)
+    }])
+    root.startNextEventSeen()
+  }
+
+  function finishEventSeen(payload) {
+    if (!root.activeEventSeen) return
+    if (!payload.ok && root.activeEventSeen.id === String(root.eventData.event_id))
+      root.eventVisitError = "Visit could not be saved. New markers may repeat next time."
+    root.activeEventSeen = null
+    Qt.callLater(function() { root.startNextEventSeen() })
+  }
+
+  function showEventArticle(article) {
+    if (root.viewMode !== "event" || !article) return
+    root.returnViewMode = root.eventOrigin ? root.eventOrigin.context : "feed"
+    root.showArticle(article)
+    root.eventArticleOpen = true
+    resultScroll.contentY = 0
+  }
+
+  function returnToEventDesk() {
+    root.cancelAiRequest()
+    root.eventArticleOpen = false
+    root.viewMode = "event"
+    root.statusText = "Coverage · cached reporting · no AI used"
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function leaveEventDesk() {
+    var origin = root.eventOrigin
+    root.eventRevision++
+    root.pendingEventLoad = false
+    root.eventVisitPending = false
+    root.eventArticleOpen = false
+    root.eventOrigin = null
+    if (!origin) { root.showMainFeed(); return }
+    root.activeArticle = origin.article
+    root.activeArticleId = origin.articleId
+    root.resultTitle = origin.title
+    root.resultText = origin.text
+    root.resultUrl = origin.url
+    root.resultProvider = origin.provider
+    root.resultKind = origin.kind
+    root.returnViewMode = origin.returnView
+    root.viewMode = origin.view
+    if (origin.view === "history") root.loadHistory()
+    resultScroll.contentY = origin.scroll
+    root.statusText = origin.view === "result"
+      ? (origin.kind === "ai" ? "Saved AI result" : "RSS synopsis · no AI used")
+      : "PYIN · your news, your choices"
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function patchEventArticle(articleId, changes) {
+    function patch(article) {
+      if (!article || String(article.id) !== String(articleId)) return article
+      var updated = ({})
+      for (var key in article) updated[key] = article[key]
+      for (var changed in changes) updated[changed] = changes[changed]
+      return updated
+    }
+    if (root.eventData.ok) {
+      var next = ({})
+      for (var key in root.eventData) next[key] = root.eventData[key]
+      next.articles = (next.articles || []).map(patch).filter(function(article) {
+        return !article.dismissed
+      })
+      next.article_count = next.articles.length
+      next.new_count = next.articles.filter(function(article) { return article.is_new }).length
+      var sources = ({})
+      for (var i = 0; i < next.articles.length; i++) sources[String(next.articles[i].source)] = true
+      next.source_count = Object.keys(sources).length
+      root.eventData = next
+    }
+    if (root.eventOrigin && root.eventOrigin.article) {
+      var origin = ({})
+      for (var field in root.eventOrigin) origin[field] = root.eventOrigin[field]
+      origin.article = patch(origin.article)
+      root.eventOrigin = origin
+    }
   }
 
   function openArticle() {
@@ -1141,6 +1300,10 @@ Item {
     if (!article || root.aiBusy) return
     if (!root.aiEnabled) {
       root.statusText = "AI is disabled in Profile → Edit setup"
+      return
+    }
+    if (root.aiProvider === "system" && root.systemAiStatus.available === false) {
+      root.statusText = String(root.systemAiStatus.message || "System AI is unavailable")
       return
     }
     root.learnArticle(article, "summary")
@@ -1196,7 +1359,8 @@ Item {
     var command = [root.backendPath, action]
     for (var i = 0; i < actionArgs.length; i++) command.push(actionArgs[i])
     command.push("--provider", root.aiProvider)
-    command.push("--system-preset", root.systemAiPreset)
+    command.push("--system-model", root.systemAiModel)
+    command.push("--system-effort", root.systemAiEffort)
     command.push("--local-url", root.localAiUrl)
     command.push("--local-model", root.localAiModel)
     return command
@@ -1641,19 +1805,26 @@ Item {
     root.statusText = "Saving article Back behavior…"
   }
 
-  function setSystemAiPreset(preset) {
-    var value = String(preset || "")
-    if (systemAiPresetProc.running || value === root.systemAiPreset) return
-    systemAiPresetProc.command = [
-      root.backendPath, "setup", "--system-ai-preset", value
-    ]
+  function setSystemAiModel(model, effort) {
+    if (systemAiPresetProc.running || (model === root.systemAiModel && effort === root.systemAiEffort)) return
+    systemAiPresetProc.command = [root.backendPath, "setup", "--system-ai-model-json",
+      JSON.stringify({model: String(model), effort: String(effort)})]
     systemAiPresetProc.running = true
-    root.statusText = "Changing PYIN's System AI speed…"
+    root.statusText = "Saving PYIN's model choice…"
+  }
+
+  function loadAiModels(refresh) {
+    if (aiModelsProc.running || root.systemAiStatus.available === false) return
+    root.aiModelRequestRevision = root.aiModelCatalogRevision
+    root.aiModelRequestAgent = String(root.systemAiStatus.agent || "")
+    aiModelsProc.command = [root.backendPath, "ai-models"]
+    if (refresh) aiModelsProc.command.push("--refresh")
+    aiModelsProc.running = true
   }
 
   function resetProfileLearning() {
     if (profileResetProc.running) return
-    if (root.readingEventsBusy) {
+    if (root.readingEventsBusy || root.activeEventSeen || root.eventSeenQueue.length > 0) {
       root.statusText = "Finishing reading history before reset…"
       return
     }
@@ -1689,8 +1860,7 @@ Item {
       + String(root.profileSourceCounts.total || 0) + " sources · "
       + (privacy.learn_from_opens === false ? "learning off" : "local learning on")
       + " · AI " + (String(ai.mode || "system") === "system"
-        ? root.systemAiPresetLabel + " · " + root.systemAiModelLabel
-          + " · " + root.systemAiEffort
+        ? root.systemAiModelLabel
         : String(ai.mode || "system"))
   }
 
@@ -1873,6 +2043,7 @@ Item {
   }
 
   function closeHiddenArticle() {
+    if (root.eventArticleOpen) { root.returnToEventDesk(); return }
     root.returnViewMode = "feed"
     root.backToFeed()
   }
@@ -2008,6 +2179,7 @@ Item {
     root.readIndex = Math.max(0,
       Math.min(root.readIndex, root.readArticles.length - 1))
     for (var stateIndex = 0; stateIndex < articleIds.length; stateIndex++) {
+      root.patchEventArticle(articleIds[stateIndex], { read: isRead, dismissed: Boolean(payload.dismissed) })
       root.searchResults = root.articlesWithReadState(
         root.searchResults, String(articleIds[stateIndex]), isRead)
       root.bookmarks = root.articlesWithReadState(
@@ -2158,6 +2330,10 @@ Item {
       return
     }
     root.cancelAiRequest()
+    root.eventOrigin = null
+    root.eventArticleOpen = false
+    root.eventRevision++
+    root.pendingEventLoad = false
     var leavingSearch = root.viewMode === "search"
     var destination = root.viewMode === "result"
       && (root.returnViewMode === "bookmarks" || root.returnViewMode === "search"
@@ -2179,7 +2355,6 @@ Item {
     root.activeArticle = null
     root.closeActionHud()
     root.whySectionExpanded = false
-    root.coverageSectionExpanded = false
     root.confirmProfileReset = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -2190,6 +2365,10 @@ Item {
       return
     }
     root.cancelAiRequest()
+    root.eventOrigin = null
+    root.eventArticleOpen = false
+    root.eventRevision++
+    root.pendingEventLoad = false
     searchField.text = ""
     root.searchQuery = ""
     root.searchResults = []
@@ -2203,13 +2382,17 @@ Item {
     root.activeArticle = null
     root.closeActionHud()
     root.whySectionExpanded = false
-    root.coverageSectionExpanded = false
     root.confirmProfileReset = false
     root.statusText = "PYIN · your news, your choices"
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function navigateBack() {
+    if (root.viewMode === "event") { root.leaveEventDesk(); return }
+    if (root.viewMode === "result" && root.eventArticleOpen) {
+      root.returnToEventDesk()
+      return
+    }
     if (root.viewMode === "about") {
       root.leaveAbout()
       return
@@ -2338,20 +2521,49 @@ Item {
   }
 
   Process {
+    id: aiModelsProc
+    stdout: StdioCollector { id: aiModelsStdout; waitForEnd: true }
+    stderr: StdioCollector { id: aiModelsStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) {
+        var revision = root.aiModelRequestRevision
+        Qt.callLater(function() {
+          if (!aiModelsProc.running && revision === root.aiModelRequestRevision
+              && root.aiModelRequestRevision === root.aiModelCatalogRevision
+              && aiModelsStdout.text === "")
+            root.aiModelCatalog = {ok: false, models: [], error: "Could not load models. Retry or enter a model manually."}
+        })
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (root.aiModelRequestRevision !== root.aiModelCatalogRevision) return
+      var payload = root.parsePayload(aiModelsStdout.text, "Could not load models. Retry or enter a model manually.")
+      if (payload.agent && String(payload.agent) !== root.aiModelRequestAgent) {
+        root.aiModelCatalog = {ok: false, models: [], error: "The Omarchy agent changed. Reopen Profile or Setup to update its status."}
+        return
+      }
+      if (exitCode !== 0 || Boolean(exitStatus)) payload.ok = false
+      if (!Array.isArray(payload.models)) payload.models = []
+      if (!payload.ok && !payload.error) payload.error = "Could not load models. Retry or enter a model manually."
+      root.aiModelCatalog = payload
+    }
+  }
+
+  Process {
     id: systemAiPresetProc
     stdout: StdioCollector { id: systemAiPresetStdout; waitForEnd: true }
     stderr: StdioCollector { id: systemAiPresetStderr; waitForEnd: true }
-    onExited: function(exitCode) {
+    onExited: function(exitCode, exitStatus) {
       var payload = root.parsePayload(systemAiPresetStdout.text,
-        String(systemAiPresetStderr.text || "Could not change System AI speed"))
+        String(systemAiPresetStderr.text || "Could not change model preference"))
+      if (exitCode !== 0 || Boolean(exitStatus)) payload.ok = false
       if (!payload.ok) {
-        root.statusText = payload.error || "Could not change System AI speed"
+        root.statusText = payload.error || "Could not change model preference"
         return
       }
       root.setupData = payload
       root.setupRevision++
-      root.statusText = "AI TL;DR · " + root.systemAiPresetLabel + " · "
-        + root.systemAiModelLabel + " · " + root.systemAiEffort + " reasoning"
+      root.statusText = "AI TL;DR · " + root.systemAiModelLabel
       if (root.viewMode === "profile") root.loadProfile()
     }
   }
@@ -2683,6 +2895,7 @@ Item {
           root.historyArticles, payload.article_id, Boolean(payload.bookmarked))
         root.readArticles = root.articlesWithBookmarkState(
           root.readArticles, payload.article_id, Boolean(payload.bookmarked))
+        root.patchEventArticle(payload.article_id, { bookmarked: Boolean(payload.bookmarked) })
         root.statusText = payload.bookmarked ? "Saved to Read Later" : "Removed from Read Later"
         root.loadFeed(true, "bookmark-signal")
       }
@@ -2779,6 +2992,42 @@ Item {
   }
 
   Process {
+    id: eventProc
+    stdout: StdioCollector { id: eventStdout; waitForEnd: true }
+    stderr: StdioCollector { id: eventStderr; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      var payload = root.parsePayload(eventStdout.text,
+        String(eventStderr.text || "Could not load event coverage"))
+      if (exitCode !== 0 || exitStatus !== 0) payload.ok = false
+      root.finishEventLoad(payload)
+    }
+    onRunningChanged: {
+      if (!running) Qt.callLater(function() {
+        if (root.eventLoadActive && !eventProc.running)
+          root.finishEventLoad({ ok: false, error: "Could not open coverage. Try again." })
+      })
+    }
+  }
+
+  Process {
+    id: eventSeenProc
+    stdout: StdioCollector { id: eventSeenStdout; waitForEnd: true }
+    stderr: StdioCollector { id: eventSeenStderr; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) {
+      var payload = root.parsePayload(eventSeenStdout.text,
+        String(eventSeenStderr.text || "Could not save event visit"))
+      if (exitCode !== 0 || exitStatus !== 0) payload.ok = false
+      root.finishEventSeen(payload)
+    }
+    onRunningChanged: {
+      if (!running) Qt.callLater(function() {
+        if (root.activeEventSeen && !eventSeenProc.running)
+          root.finishEventSeen({ ok: false })
+      })
+    }
+  }
+
+  Process {
     id: sourceHealthProc
     stdout: StdioCollector { id: sourceHealthStdout; waitForEnd: true }
     stderr: StdioCollector { id: sourceHealthStderr; waitForEnd: true }
@@ -2802,6 +3051,8 @@ Item {
       if (!payload.ok) root.statusText = payload.error || "Could not load profile"
       else {
         root.profileData = payload
+        if (payload.system_ai_status)
+          root.setupData = Object.assign({}, root.setupData, { system_ai_status: payload.system_ai_status })
         root.applyLibraryCounts(payload.counts, root.activeProfileHistoryRevision)
         root.statusText = "Your curation profile · stored only on this device"
       }
@@ -2985,10 +3236,12 @@ Item {
       focus: true
       Window.onActiveChanged: {
         root.syncReadingEngagement()
+        root.queueEventVisit()
         if (Window.active) root.queueVisibleImpressions()
       }
       Window.onVisibilityChanged: {
         root.syncReadingEngagement()
+        root.queueEventVisit()
         root.queueVisibleImpressions()
       }
 
@@ -3019,6 +3272,7 @@ Item {
           else if (root.viewMode === "bookmarks" && dy !== 0) root.moveSavedCursor(dy)
           else if (root.viewMode === "history" && dy !== 0) root.moveHistoryCursor(dy)
           else if (root.viewMode === "read" && dy !== 0) root.moveReadCursor(dy)
+          else if (root.viewMode === "event" && dy !== 0) eventPage.moveCursor(dy)
           else if (root.viewMode === "result" && dy !== 0)
             resultScroll.contentY = Math.max(0,
               Math.min(Math.max(0, resultScroll.contentHeight - resultScroll.height),
@@ -3040,6 +3294,7 @@ Item {
           else if (root.viewMode === "bookmarks") root.showArticle(root.selectedBookmark)
           else if (root.viewMode === "history") root.showArticle(root.selectedHistoryArticle)
           else if (root.viewMode === "read") root.showArticle(root.selectedReadArticle)
+          else if (root.viewMode === "event") eventPage.openSelected()
         }
         onCloseRequested: {
           if (root.actionHudExpanded) root.stepBackActionHud()
@@ -3062,6 +3317,7 @@ Item {
             return
           }
           if (t === "?") root.showHelp()
+          else if ((t === "e" || t === "E") && root.isArticleContext()) root.showEventDesk()
           else if (root.viewMode === "help" && t === "1") root.setHelpTab("keys")
           else if (root.viewMode === "help" && t === "2") root.setHelpTab("feed")
           else if ((t === "a" || t === "A") && root.isArticleContext()
@@ -3082,7 +3338,7 @@ Item {
                      || root.viewMode === "bookmarks" || root.viewMode === "history"
                      || root.viewMode === "read"))
             root.openArticle()
-          else if ((t === "o" || t === "O") && root.resultUrl !== "")
+          else if ((t === "o" || t === "O") && root.viewMode === "result" && root.resultUrl !== "")
             root.openArticle()
           else if (t === "=" && root.isArticleContext()
                    && root.currentArticle() !== null && !root.aiBusy)
@@ -3159,10 +3415,14 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: mastheadLogo.hovered
-                ? "Why PYIN? Open the story."
-                : "Your news. Your choices. Less noise."
-              color: mastheadLogo.hovered ? root.foreground : root.dim
+              width: Math.max(0, header.width - (actionGroup.visible
+                ? actionGroup.width + Style.spacing.lg : 0))
+              elide: Text.ElideRight
+              text: mastheadLogo.overworked ? mastheadLogo.prankText
+                : (mastheadLogo.hovered ? "Why PYIN? Open the story."
+                  : "Your news. Your choices. Less noise.")
+              color: mastheadLogo.overworked ? root.accent
+                : (mastheadLogo.hovered ? root.foreground : root.dim)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
 
@@ -3189,9 +3449,10 @@ Item {
                 iconText: "󰁍"
                 tooltipText: root.viewMode === "search"
                   ? "Clear search and return to feed"
+                  : (root.viewMode === "result" && root.eventArticleOpen ? "Return to coverage"
                   : (root.viewMode === "result" && root.articleBackMarksRead
                     && root.activeArticle && !Boolean(root.activeArticle.read)
-                    ? "Mark read, hide, and return to the main feed" : "Back")
+                    ? "Mark read, hide, and return to the main feed" : "Back"))
                 foreground: root.foreground
                 accent: root.accent
                 fontFamily: root.fontFamily
@@ -3432,6 +3693,10 @@ Item {
 
           SetupWizard {
             id: setupWizard
+            systemAiStatus: root.systemAiStatus
+            aiModelCatalog: root.aiModelCatalog
+            aiModelsLoading: aiModelsProc.running
+            onAiModelsRequested: function(refresh) { root.loadAiModels(refresh) }
             anchors.fill: parent
             visible: root.viewMode === "setup"
             profile: root.setupProfile
@@ -3708,6 +3973,19 @@ Item {
             }
           }
 
+          EventDeskPage {
+            id: eventPage
+            anchors.fill: parent
+            visible: root.viewMode === "event"
+            coverage: root.eventData
+            busy: root.eventLoadActive || root.pendingEventLoad
+            visitError: root.eventVisitError
+            compact: root.compactDensity
+            separators: root.storySeparators
+            onArticleRequested: function(article) { root.showEventArticle(article) }
+            onRetryRequested: root.loadEventDesk()
+          }
+
           Flickable {
             id: resultScroll
             anchors.fill: parent
@@ -3733,71 +4011,45 @@ Item {
                 wrapMode: Text.Wrap
               }
 
-              Text {
+              Item {
+                id: resultSourceRow
                 width: parent.width
-                visible: root.resultProvider !== ""
-                textFormat: Text.PlainText
-                text: root.resultProvider
-                color: root.accent
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 0.7
-              }
-
-              Button {
-                width: parent.width
-                visible: root.activeArticle !== null
-                  && Number(root.activeArticle.coverage_count || 1) > 1
-                text: "Coverage · " + String(root.activeArticle
-                  ? root.activeArticle.coverage_count : 1) + " sources"
-                iconText: root.coverageSectionExpanded ? "󰅀" : "󰅂"
-                tooltipText: root.coverageSectionExpanded
-                  ? "Hide alternate coverage" : "Compare publishers covering this event"
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                leftAlign: true
-                bordered: true
-                onClicked: root.coverageSectionExpanded = !root.coverageSectionExpanded
-              }
-
-              Column {
-                width: parent.width
-                visible: root.coverageSectionExpanded && root.activeArticle !== null
-                  && Number(root.activeArticle.coverage_count || 1) > 1
-                spacing: Style.spacing.xs
+                visible: root.resultProvider !== "" || resultCoverageButton.visible
+                height: Math.max(resultProviderText.implicitHeight,
+                  resultCoverageButton.visible ? resultCoverageButton.implicitHeight : 0)
 
                 Text {
-                  width: parent.width
+                  id: resultProviderText
+                  anchors.left: parent.left
+                  anchors.right: resultCoverageButton.visible ? resultCoverageButton.left : parent.right
+                  anchors.rightMargin: resultCoverageButton.visible ? Style.spacing.md : 0
+                  anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
-                  text: "CURRENT · " + String(root.activeArticle
-                    ? root.activeArticle.source : "")
+                  text: root.resultProvider
+                  wrapMode: Text.Wrap
                   color: root.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  font.bold: true
                   font.letterSpacing: 0.7
                 }
 
-                Repeater {
-                  model: root.activeArticle && root.activeArticle.related_articles
-                    ? root.activeArticle.related_articles : []
-
-                  delegate: Button {
-                    required property var modelData
-                    width: parent.width
-                    text: String(modelData.source || "Source") + " · "
-                      + String(modelData.title || "Untitled")
-                    iconText: "󰓰"
-                    tooltipText: "Read this feed's synopsis · "
-                      + String(modelData.age || "")
-                    foreground: root.foreground
-                    accent: root.accent
-                    fontFamily: root.fontFamily
-                    leftAlign: true
-                    bordered: false
-                    onClicked: root.showCoverageArticle(modelData)
-                  }
+                Button {
+                  id: resultCoverageButton
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.activeArticle !== null
+                  text: "Coverage"
+                  tooltipText: root.eventArticleOpen
+                    ? "Back to coverage · E" : "More reporting on this story · E"
+                  foreground: root.accent
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.sm
+                  verticalPadding: Style.spacing.xs
+                  focusable: true
+                  enabled: !root.aiBusy
+                  onClicked: root.showEventDesk()
                 }
               }
 
@@ -4764,13 +5016,16 @@ Item {
             sourceMixText: root.sourceMixSummary()
             aiProvider: root.aiProvider
             aiSummary: root.aiProvider === "system"
-              ? root.systemAiPresetLabel + " · " + root.systemAiModelLabel + " · "
-                + root.systemAiEffort + " reasoning. Applies only to requested PYIN summaries."
+              ? String(root.systemAiStatus.message || "Checking selected agent…") + "\n"
+                + (root.systemAiStatus.available === false ? "" : root.systemAiSummary)
               : (root.aiProvider === "local"
                 ? "Local server · " + root.localAiModel
                 : "AI summaries are disabled.")
-            systemAiPreset: root.systemAiPreset
-            systemAiOptions: root.systemAiOptions
+            systemAiModel: root.systemAiModel
+            systemAiEffort: root.systemAiEffort
+            aiModelCatalog: root.aiModelCatalog
+            aiModelsLoading: aiModelsProc.running
+            systemAiAvailable: root.systemAiStatus.available !== false
             articleBackMarksRead: root.articleBackMarksRead
             footerLinkLabel: root.footerLinkLabel
             footerLinkUrl: root.footerLinkUrl
@@ -4815,7 +5070,8 @@ Item {
             onFooterLinkRequested: function(label, url) {
               root.setFooterLink(label, url)
             }
-            onAiPresetRequested: function(preset) { root.setSystemAiPreset(preset) }
+            onAiModelRequested: function(model, effort) { root.setSystemAiModel(model, effort) }
+            onAiModelsRequested: function(refresh) { root.loadAiModels(refresh) }
             onInterestRemoveRequested: function(term, scope) {
               root.removeInterestNode(term, scope)
             }
@@ -5407,7 +5663,9 @@ Item {
             anchors.rightMargin: Style.spacing.md
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText
-            text: root.statusText
+            text: root.viewMode === "event"
+              ? "j/k move  ·  Enter synopsis  ·  b/esc back  ·  coverage stays local"
+              : root.statusText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
