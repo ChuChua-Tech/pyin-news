@@ -5,6 +5,39 @@ Versioning.
 
 ## Unreleased
 
+## [0.20.0] - 2026-09-04
+
+### Added
+
+- Subtle article separators in Calm and Compact layouts, with a line-free
+  Classic layout for the original appearance
+- Independent Plain and Paper backgrounds with a live setup preview; Paper
+  follows Omarchy's palette while article and AI reading views stay plain
+- A Source Health section in Profile with persistent feed errors, failed-check
+  counts, last-check and last-success times, and refresh controls
+
+### Fixed
+
+- Invalid profile imports leave saved choices untouched; supported older
+  exports remain compatible and settings plus explicit interests restore atomically
+- Identical ranking inputs produce consistent story order and coverage groups
+  across processes and database insertion order
+- Every deliberate reopen updates viewed history without repeatedly increasing
+  preference weights; acknowledged saves keep counts and current lists consistent
+- No signal prevents a story's inferred reading signals from returning after
+  another visit or app restart, while preserving its viewed history
+- Exposure measurement excludes offscreen cards; the 12-second reading signal
+  counts focused article time and pauses when the reader loses focus
+- Feed checks reject HTML and unrelated XML rather than reporting an empty
+  success; cached stories remain available within the configured retention window
+
+### Upgrade
+
+- Existing profiles retain their choices and use Plain by default. Layout and
+  background settings travel with profile exports.
+- The first check of previously cached feeds revalidates their content before
+  trusting conditional responses. Healthy checks clear prior source errors.
+
 ## [0.19.0] - 2026-09-04
 
 ### Added
@@ -42,5 +75,6 @@ Initial public release.
 - Feed compatibility for publishers that reject explicit compression or emit
   isolated legacy bytes in otherwise valid UTF-8 XML
 
+[0.20.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.20.0
 [0.19.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.19.0
 [0.18.0]: https://github.com/chuchua-tech/pyin-news/releases/tag/v0.18.0

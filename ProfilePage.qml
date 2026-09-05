@@ -37,6 +37,10 @@ Flickable {
   property var storage: ({})
   property var exposure: ({})
   property var updateData: ({})
+  property var sourceHealthData: ({})
+  property bool sourceHealthBusy: false
+  property bool feedsRefreshing: false
+  readonly property bool sourceHealthExpanded: sourceHealthSection.expanded
   property string showLessTermText: "None"
   property string showLessSourceText: "None"
   property bool profileBusy: false
@@ -73,6 +77,8 @@ Flickable {
   signal resetRequested()
   signal updateCheckRequested()
   signal updateInstallRequested()
+  signal sourceHealthRequested()
+  signal feedsRefreshRequested()
 
   function menuItemEnabled(item) {
     return page.navigationItems.indexOf(String(item)) !== -1
@@ -84,6 +90,7 @@ Flickable {
     page.learningExpanded = false
     page.dataExpanded = false
     page.updatesExpanded = false
+    sourceHealthSection.expanded = false
     page.setupDetailsExpanded = false
     page.showLessExpanded = false
     page.confirmUpdate = false
@@ -252,6 +259,21 @@ Flickable {
           wrapMode: Text.Wrap
         }
       }
+    }
+
+    SourceHealthSection {
+      id: sourceHealthSection
+      width: parent.width
+      foreground: page.foreground
+      background: page.background
+      accent: page.accent
+      dim: page.dim
+      fontFamily: page.fontFamily
+      health: page.sourceHealthData
+      busy: page.sourceHealthBusy
+      refreshing: page.feedsRefreshing
+      onStatusRequested: page.sourceHealthRequested()
+      onRefreshRequested: page.feedsRefreshRequested()
     }
 
     Button {

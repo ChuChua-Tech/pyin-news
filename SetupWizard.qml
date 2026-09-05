@@ -23,6 +23,7 @@ FocusScope {
   property string validationMessage: ""
 
   property string density: "calm"
+  property string backgroundStyle: "plain"
   property int readingMinutes: 15
   property string country: ""
   property string region: ""
@@ -222,6 +223,8 @@ FocusScope {
     var navigation = value.navigation || ({})
     wizard.existingComplete = Boolean(value.complete)
     wizard.density = String(wizard.valueOr(appearance, "density", "calm"))
+    wizard.backgroundStyle = String(wizard.valueOr(appearance, "background", "plain")) === "paper"
+      ? "paper" : "plain"
     wizard.readingMinutes = Number(wizard.valueOr(value, "reading_minutes", 15))
     wizard.country = String(wizard.valueOr(location, "country", ""))
     wizard.region = String(wizard.valueOr(location, "region", ""))
@@ -338,11 +341,12 @@ FocusScope {
 
   function buildProfile() {
     return {
-      version: 5,
+      version: 6,
       complete: true,
       appearance: {
         theme: "omarchy",
         density: wizard.density,
+        background: wizard.backgroundStyle,
         footer_link: wizard.valueOr(
           wizard.profile && wizard.profile.appearance
             ? wizard.profile.appearance : ({}),
@@ -575,7 +579,8 @@ FocusScope {
             value: wizard.density
             options: [
               { value: "calm", label: "Calm" },
-              { value: "compact", label: "Compact" }
+              { value: "compact", label: "Compact" },
+              { value: "classic", label: "Classic" }
             ]
             foreground: wizard.foreground
             background: wizard.background
@@ -585,12 +590,67 @@ FocusScope {
           }
         }
 
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: wizard.density === "classic"
+            ? "Classic keeps the original roomy layout with open spacing and no separators."
+            : (wizard.density === "compact"
+              ? "Compact fits more stories on screen, with subtle lines between them."
+              : "Calm gives each story room to breathe, with subtle lines between them.")
+          color: wizard.dim
+          font.family: wizard.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.Wrap
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.spacing.panelGap
+
+          Dropdown {
+            id: backgroundChoice
+            width: Math.min(Style.space(300), (parent.width - parent.spacing) / 2)
+            label: "Background"
+            value: wizard.backgroundStyle
+            options: [
+              { value: "plain", label: "Plain" },
+              { value: "paper", label: "Paper" }
+            ]
+            foreground: wizard.foreground
+            background: wizard.background
+            accent: wizard.accent
+            fontFamily: wizard.fontFamily
+            onChanged: function(value) { wizard.backgroundStyle = value }
+          }
+
+          Text {
+            width: parent.width - backgroundChoice.width - parent.spacing
+            anchors.verticalCenter: backgroundChoice.verticalCenter
+            textFormat: Text.PlainText
+            text: wizard.backgroundStyle === "paper"
+              ? "Paper adds a subtle, static grain in your current Omarchy colors."
+              : "Plain uses your Omarchy background without texture."
+            color: wizard.dim
+            font.family: wizard.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.Wrap
+          }
+        }
+
         BorderSurface {
           width: parent.width
           height: themeText.implicitHeight + Style.spacing.huge * 2
-          color: Style.controlFill(false, false, wizard.foreground, wizard.accent)
+          color: wizard.background
           borderSpec: Border.controlSpec("normal", wizard.foreground, wizard.accent)
           radius: Style.cornerRadius
+
+          Loader {
+            anchors.fill: parent
+            anchors.margins: Style.spacing.hairline
+            active: wizard.visible && wizard.page === 0 && wizard.backgroundStyle === "paper"
+            sourceComponent: PaperBackground { ink: wizard.foreground }
+          }
 
           Text {
             id: themeText
@@ -599,7 +659,8 @@ FocusScope {
             anchors.verticalCenter: parent.verticalCenter
             anchors.margins: Style.spacing.rowPaddingX
             textFormat: Text.PlainText
-            text: "THEME · FOLLOW OMARCHY\nNo duplicate palette to maintain. A theme change in Omarchy updates this app with it."
+            text: (wizard.backgroundStyle === "paper" ? "PAPER" : "PLAIN")
+              + " · FOLLOW OMARCHY\nYour colors, type, and spacing update automatically when the theme changes."
             color: wizard.foreground
             font.family: wizard.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -1310,7 +1371,7 @@ FocusScope {
 
         Repeater {
           model: [
-            { label: "READING", value: String(wizard.readingMinutes) + " minutes · " + wizard.density + " density · follows Omarchy" },
+            { label: "READING", value: String(wizard.readingMinutes) + " minutes · " + wizard.density + " density · " + wizard.backgroundStyle + " background · follows Omarchy" },
             { label: "PLACE", value: [wizard.city, wizard.region, wizard.country].filter(function(v) { return String(v).trim() !== "" }).join(", ") || "No location boost" },
             { label: "TOPICS", value: String(wizard.mustTopics.length) + " must-see · " + String(wizard.interestedTopics.length) + " interests · " + String(wizard.mutedTopics.length) + " muted · " + String(wizard.keywordList(wizard.blockedKeywordsText).length) + " blocked keywords" },
             { label: "SOURCES", value: String(wizard.activeSourceEstimate()) + " of " + String(wizard.effectiveSourceOptions.length) + " active · " + String(wizard.disabledSourceIds.length) + " individually hidden · " + String(wizard.customSources.length) + " custom" },
