@@ -45,7 +45,11 @@ FocusScope {
   property string quietEnd: "07:00"
   property int notificationMax: 6
   property string aiMode: "system"
-  property string systemAiPreset: "balanced"
+  property string systemAiModel: ""
+  property string systemAiEffort: ""
+  property var aiModelCatalog: ({})
+  property bool aiModelsLoading: false
+  signal aiModelsRequested(bool refresh)
   property string localAiUrl: "http://127.0.0.1:11434/v1"
   property string localAiModel: "llama3.2:3b"
   property bool learnFromOpens: true
@@ -58,12 +62,7 @@ FocusScope {
   readonly property var sourceTypeOptions: catalogs && catalogs.source_types ? catalogs.source_types : []
   readonly property var viewpointOptions: catalogs && catalogs.viewpoints ? catalogs.viewpoints : []
   readonly property var readingOptions: catalogs && catalogs.reading ? catalogs.reading : []
-  readonly property var systemAiOptions: catalogs && catalogs.system_ai
-    ? catalogs.system_ai : [
-      { value: "fast", label: "Fast", model: "gpt-5.6-luna", model_label: "GPT-5.6 Luna", effort: "low", description: "Quickest response for routine source-bounded summaries" },
-      { value: "balanced", label: "Balanced", model: "gpt-5.6-sol", model_label: "GPT-5.6 Sol", effort: "low", description: "Flagship model with light reasoning for speed and accuracy" },
-      { value: "thorough", label: "Thorough", model: "gpt-5.6-sol", model_label: "GPT-5.6 Sol", effort: "high", description: "More reasoning for dense, ambiguous, or consequential stories" }
-    ]
+  property var systemAiStatus: ({})
   readonly property var sourceOptions: sourceSummary && sourceSummary.catalog
     ? sourceSummary.catalog : []
   readonly property var effectiveSourceOptions: {
@@ -195,19 +194,9 @@ FocusScope {
     return output
   }
 
-  function systemAiOption(value) {
-    var key = String(value || "balanced")
-    for (var i = 0; i < wizard.systemAiOptions.length; i++)
-      if (String(wizard.systemAiOptions[i].value) === key)
-        return wizard.systemAiOptions[i]
-    return wizard.systemAiOptions.length > 0 ? wizard.systemAiOptions[0] : ({})
-  }
-
   function systemAiSummary() {
-    var selected = wizard.systemAiOption(wizard.systemAiPreset)
-    return String(selected.label || "Balanced") + " · "
-      + String(selected.model_label || selected.model || "GPT-5.6 Sol") + " · "
-      + String(selected.effort || "low") + " reasoning"
+    return wizard.systemAiModel === "" ? "Agent default"
+      : wizard.systemAiModel + (wizard.systemAiEffort ? " · " + wizard.systemAiEffort : " · agent default reasoning")
   }
 
   function loadProfile() {
@@ -247,7 +236,8 @@ FocusScope {
     wizard.quietEnd = String(wizard.valueOr(notifications, "quiet_end", "07:00"))
     wizard.notificationMax = Number(wizard.valueOr(notifications, "max_per_day", 6))
     wizard.aiMode = String(wizard.valueOr(ai, "mode", "system"))
-    wizard.systemAiPreset = String(wizard.valueOr(ai, "system_preset", "balanced"))
+    wizard.systemAiModel = String(ai.system_model || "")
+    wizard.systemAiEffort = String(ai.system_effort || "")
     wizard.localAiUrl = String(wizard.valueOr(ai, "local_url", "http://127.0.0.1:11434/v1"))
     wizard.localAiModel = String(wizard.valueOr(ai, "local_model", "llama3.2:3b"))
     wizard.learnFromOpens = Boolean(wizard.valueOr(privacy, "learn_from_opens", true))
@@ -341,7 +331,7 @@ FocusScope {
 
   function buildProfile() {
     return {
-      version: 6,
+      version: 8,
       complete: true,
       appearance: {
         theme: "omarchy",
@@ -386,7 +376,8 @@ FocusScope {
       },
       ai: {
         mode: wizard.aiMode,
-        system_preset: wizard.systemAiPreset,
+        system_model: wizard.systemAiModel,
+        system_effort: wizard.systemAiEffort,
         local_url: wizard.localAiUrl.trim(),
         local_model: wizard.localAiModel.trim()
       },
@@ -1218,7 +1209,7 @@ FocusScope {
 
           Repeater {
             model: [
-              { value: "system", label: "System AI", description: "Follow Omarchy's selected AI; the current safe adapter supports Codex" },
+              { value: "system", label: "Follow Omarchy", description: "Follow Omarchy's selected AI; the current safe adapter supports Codex" },
               { value: "local", label: "Local server", description: "Use an OpenAI-compatible endpoint on this machine only" },
               { value: "off", label: "No AI", description: "Disable per-story AI TL;DR actions" }
             ]
@@ -1242,52 +1233,31 @@ FocusScope {
           visible: wizard.aiMode === "system"
           width: parent.width
           textFormat: Text.PlainText
-          text: "SYSTEM AI SPEED"
-          color: wizard.accent
-          font.family: wizard.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
-          font.letterSpacing: 0.7
-        }
-
-        Flow {
-          id: systemAiPresetFlow
-          visible: wizard.aiMode === "system"
-          width: parent.width
-          spacing: Style.spacing.md
-
-          Repeater {
-            model: wizard.systemAiOptions
-
-            Button {
-              required property var modelData
-              width: Math.max(Style.space(140),
-                Math.floor((systemAiPresetFlow.width - 2 * Style.spacing.md) / 3))
-              text: String(modelData.label)
-              tooltipText: String(modelData.model_label || modelData.model) + " · "
-                + String(modelData.effort) + " reasoning · "
-                + String(modelData.description)
-              focusable: true
-              bordered: true
-              selected: wizard.systemAiPreset === String(modelData.value)
-              foreground: wizard.foreground
-              accent: wizard.accent
-              fontFamily: wizard.fontFamily
-              onClicked: wizard.systemAiPreset = String(modelData.value)
-            }
-          }
-        }
-
-        Text {
-          visible: wizard.aiMode === "system"
-          width: parent.width
-          textFormat: Text.PlainText
-          text: wizard.systemAiSummary()
-            + ". This overrides only PYIN; your normal Codex model stays unchanged."
+          text: String(wizard.systemAiStatus.message || "Checking selected agent…")
+          wrapMode: Text.Wrap
           color: wizard.dim
           font.family: wizard.fontFamily
           font.pixelSize: Style.font.bodySmall
-          wrapMode: Text.Wrap
+        }
+
+        AiModelPicker {
+          width: parent.width
+          visible: wizard.aiMode === "system" && wizard.systemAiStatus.available !== false
+          selectedModel: wizard.systemAiModel
+          selectedEffort: wizard.systemAiEffort
+          catalog: wizard.aiModelCatalog
+          loading: wizard.aiModelsLoading
+          saving: wizard.saving
+          foreground: wizard.foreground
+          background: wizard.background
+          accent: wizard.accent
+          dim: wizard.dim
+          fontFamily: wizard.fontFamily
+          onDiscoveryRequested: function(refresh) { wizard.aiModelsRequested(refresh) }
+          onSelectionRequested: function(model, effort) {
+            wizard.systemAiModel = model
+            wizard.systemAiEffort = effort
+          }
         }
 
         TextField {

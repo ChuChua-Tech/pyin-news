@@ -86,6 +86,7 @@ the user chooses to send it.
 - `j` / `k` or arrow keys: move through stories
 - `Tab` / `Shift+Tab`: move through the persistent menu and page controls; `Enter` or `Space` activates the focused control
 - `Enter` or left-click: open the feed-provided synopsis without AI
+- `e`: open Event Desk for the current story; its synopsis also has an Event Desk button
 - `o`: open the selected story in the browser
 - `t`, `s`, or right-click: create an AI TL;DR for the selected story
 - `a` or `A`: open the keyboard-first Article Actions HUD for the selected story
@@ -149,7 +150,7 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 - individual sources to hide plus up to 50 user-added RSS or Atom feeds
 - open-minded, broad, or familiar-first discovery ratios
 - desktop-alert quiet hours and a daily notification ceiling
-- System AI with Fast, Balanced, or Thorough presets; a loopback local server; or no AI
+- Follow Omarchy with Agent default or your own model choice; a loopback local server; or no AI
 - reading-choice learning and cache retention
 - whether leaving an article with Back marks it read and hides it
 
@@ -202,20 +203,41 @@ page indefinitely.
 
 ## AI providers
 
-`System AI` is the default wizard choice. PYIN reads Omarchy's selected agent from
+`Follow Omarchy` is the default wizard choice (System AI mode). PYIN reads Omarchy's selected agent from
 `~/.config/omarchy/defaults/agent`. The current adapter supports Codex through
 Codex's local app-server event stream in an ephemeral, read-only sandbox. Final-answer
 deltas appear as they arrive; commentary events are discarded. It never uses the normal
 `omarchy agent` auto-approval launcher.
 
-System AI has three per-PYIN presets: Fast uses GPT-5.6 Luna with low reasoning,
-Balanced uses GPT-5.6 Sol with low reasoning, and Thorough uses GPT-5.6 Sol with
-high reasoning. Balanced is the default. These overrides apply only to PYIN's
-ephemeral summary thread, so changing them does not alter the user's normal Codex
-model or reasoning setting. Profile exposes the active preset, model, and effort and
-allows one-click switching. The exact model and effort are also included in each
-summary's cache identity and visible provider label, so a preset change cannot silently
-reuse output from a different model configuration.
+The Model dropdown in Setup and Profile starts with **Agent default**, which
+leaves model and reasoning overrides unset. Choose a model from the agent's
+catalog or select **Enter model name manually…** to use an exact identifier.
+An optional reasoning dropdown shows settings advertised for the chosen model;
+**Agent default** leaves reasoning to the agent's configuration. These choices
+apply only to PYIN and do not change the agent's settings.
+
+Codex model discovery runs when the picker is opened or explicitly refreshed.
+It reads the app-server model catalog without creating a conversation or making
+an inference request. Results are cached locally for fifteen minutes. A failed
+refresh can show the previous catalog with an error; Agent default and manual
+entry remain available. Model access is checked when requested, and PYIN does
+not silently substitute another model. Other agents require their own discovery
+and summary adapters; a provider API catalog alone does not supply that adapter.
+
+Old Fast, Balanced, and Thorough preferences migrate to their exact model and
+reasoning choices. The three preset buttons are replaced by the model picker.
+Completed summaries show the effective model and provider returned by Codex.
+Requests using the new model settings generate fresh summaries because provider
+configuration can change outside PYIN. Legacy CLI preset flags remain accepted
+for compatibility, with their original caching behavior.
+
+Setup and Profile also report the selected agent's availability. If Omarchy has
+no selected agent, PYIN does not infer Codex from its installation. Unsupported
+agents and a missing Codex command are explained before a summary request.
+Availability checks do not launch an agent. Opening the model picker starts
+a catalog lookup; summary authentication is checked when a summary is requested.
+Other agent adapters and hosted endpoints are not currently supported. Local
+server and No AI remain usable regardless of Omarchy's selected agent.
 
 `Local server` sends a standard chat-completions request to a loopback-only
 OpenAI-compatible endpoint. Ollama's default example is
@@ -322,9 +344,39 @@ freshness, topic, location, source-feedback, trend, search, and alert signals
 with the editable interest graph in a single ranking pass. There is no version
 switch or shadow ranker to configure. Every card still explains its strongest
 score components, and AI is never used to choose the feed order.
-With the same articles, settings, and scoring time, ranking and coverage groups
-are reproducible across launches and database insertion order. Equal scores use
-stable article identities to resolve ties.
+With the same event index, articles, settings, and scoring time, ranking is
+reproducible across launches. Initial event assignment is independent of database
+insertion order within each refresh. Equal scores use stable article identities
+to resolve ties.
+
+### Coverage (Event Desk)
+
+Open **Coverage** beside the publisher line in a synopsis or press `e` on a story in the feed, Search,
+Read Later, or History. It shows cached reporting from earliest to latest, with
+publisher names and publication times in your time zone. `j`/`k` selects reports;
+`Enter` opens a synopsis. Back returns to the same timeline position, then to
+the original story or list. Moving within Event Desk does not automatically mark
+reports read; explicit read, dismiss, and bookmark actions apply to one report.
+
+Events have persistent local identities. New reporting joins an existing event
+when its headline matches the original anchor and its publication date is within
+four days of that anchor. Existing memberships survive ranking changes, corrected
+headlines, and later arrivals. Matching uses local text rules and can be imperfect;
+it does not establish that publishers agree or verify their claims.
+
+The first visit establishes a baseline. Later visits mark reporting added to the
+cache since that baseline as **New**, including reports published earlier but
+fetched later. Each visit keeps its original snapshot and markers; subsequent
+arrivals appear on the next visit. A separate acknowledgement records only the
+loaded snapshot, so arrivals during navigation are not silently consumed.
+
+Coverage respects active publishers, blocked keywords, and dismissals. Read
+reports remain available for context. Event Desk makes no network or AI requests.
+Its index and visits stay in the local database and are excluded from portable
+profile exports. **Reset learned history** also forgets event visits. Normal cache
+retention removes expired reports; an event disappears when its last report is
+removed. Calm and Compact use subtle report separators; Classic omits them, and
+Plain/Paper continues to follow your appearance choice.
 
 PYIN also records feed cards whose actual bounds intersect the viewport while
 the reader is focused, in 15-minute de-duplicated buckets. Offscreen cached rows

@@ -78,7 +78,7 @@ class ProfileImportTests(unittest.TestCase):
             "behavior": {"mark_read_on_back": False},
             "navigation": {"items": ["bookmarks", "alerts"]},
             "notifications": {"enabled": False, "quiet_start": "21:30", "quiet_end": "08:15", "max_per_day": 2},
-            "ai": {"mode": "off", "system_preset": self.backend.DEFAULT_SYSTEM_AI_PRESET,
+            "ai": {"mode": "off", "system_model": "", "system_effort": "",
                    "local_url": "http://127.0.0.1:11434/v1", "local_model": "custom-model"},
             "privacy": {"learn_from_opens": False, "retention_days": 21},
         })
@@ -267,9 +267,11 @@ class ProfileImportTests(unittest.TestCase):
                 del historical["blocked_keywords"]
                 expected["behavior"] = {"mark_read_on_back": True}
                 expected["blocked_keywords"] = []
-            if version < 3:
-                del historical["ai"]["system_preset"]
-                expected["ai"]["system_preset"] = self.backend.DEFAULT_SYSTEM_AI_PRESET
+            if version < 8:
+                del historical["ai"]["system_model"]
+                del historical["ai"]["system_effort"]
+                if version >= 3:
+                    historical["ai"]["system_preset"] = "configured"
             if version < 4:
                 del historical["navigation"]
                 expected["navigation"] = {"items": ["bookmarks", "history", "alerts", "refresh"]}

@@ -5,6 +5,47 @@ Versioning.
 
 ## Unreleased
 
+## [0.21.0] - 2026-09-05
+
+### Added
+
+- Coverage (Event Desk): open a story's reporting timeline from the compact
+  Coverage action beside its publisher or press `e`.
+  Browse publishers and publication times, return to the same position, and see
+  reporting added since your previous visit marked New.
+- A searchable AI model picker in Setup and Profile, with Agent default,
+  models discovered from Codex, manual model entry, and optional reasoning settings
+- On-demand model catalog refresh with a local cache and useful failure messages;
+  discovery does not generate an AI response
+- A small masthead Easter egg that respects the logo animation preference
+
+### Changed
+
+- Follow Omarchy uses the selected agent's configuration by default. Choosing a
+  model or reasoning setting overrides it only for PYIN summaries.
+- Fast, Balanced, and Thorough buttons are replaced by the model picker. Existing
+  selections retain their exact model and reasoning settings.
+- Summaries using the new model settings are generated fresh and display the
+  effective model and provider returned by Codex.
+
+### Fixed
+
+- Missing, unset, and unsupported Omarchy agents are explained before a summary;
+  PYIN no longer selects Codex merely because it is installed.
+- Event membership remains stable across ranking changes and later arrivals.
+  Read, bookmark, and dismiss actions in Event Desk apply to the selected report.
+- Event visit acknowledgements require a displayed, focused timeline; metadata
+  updates preserve its scroll position and selected report.
+
+### Upgrade
+
+- Profiles migrate automatically, preserving saved choices. Supported older
+  profile exports can still be imported.
+- Event Desk indexes the existing local cache on first use. Its first visit
+  establishes a baseline for later New markers.
+- Codex remains the supported System AI adapter. Local server and No AI remain
+  available; this release does not add other agent adapters or hosted endpoints.
+
 ## [0.20.0] - 2026-09-04
 
 ### Added
