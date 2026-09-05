@@ -28,3 +28,6 @@ jobs:
 
       - name: Run release tests
         run: python -m unittest discover -s tests -v
+
+      - name: Check reader event handling
+        run: node --test tests/test_reading_ui.cjs

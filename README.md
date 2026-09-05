@@ -139,7 +139,7 @@ being assembled, then settles on `PYIN` as the edition appears.
 
 First launch opens an eight-page, re-runnable wizard. It configures:
 
-- a finite 5, 15, or 30 minute reading window and calm/compact density
+- a finite 5, 15, or 30 minute reading window and Calm, Compact, or Classic layout
 - optional country, region, and city boosts, stored locally
 - language, must-see, interested, and muted topics
 - a 50-entry keyword blacklist that hard-filters the feed and alert notifications
@@ -155,6 +155,14 @@ First launch opens an eight-page, re-runnable wizard. It configures:
 
 The app always inherits the active Omarchy palette, controls, borders, spacing,
 and type. The density choice changes layout without creating a competing theme.
+Calm uses roomy story rows with subtle inset separators; Compact keeps the
+separators and fits more stories on screen. Classic keeps the original roomy
+layout without separator lines. All three choices follow profile export/import.
+Background is a separate Plain/Paper choice on the first setup page, with a live
+preview. Plain is the default. Paper adds a faint, static grain tinted by the
+active Omarchy palette; article-reading and AI-result views keep a plain surface.
+It uses one small repeating texture with no animation, downloads, or additional
+service. The choice is included in profile export/import; older profiles use Plain.
 Every choice is visible later under Profile, and `c` reopens the wizard.
 Geography is deliberately separate from subject topics: the saved location
 provides each reader's local and national lens, while country names such as
@@ -182,7 +190,9 @@ History keeps deliberate synopsis opens in newest-viewed order, including the
 last-viewed age and repeat-open count. Its Viewed and Hidden tabs separate
 reading history from items marked read or dismissed. The history index is
 stored only in PYIN's local database and does not depend on personalization
-being enabled.
+being enabled. Every deliberate reopen updates the visit count and latest-view
+time; repeated visits do not repeatedly increase the story's learning weight.
+The reader saves visits in order and updates its counts after each save succeeds.
 
 Profile is organized into four collapsed groups: Customize, Your Choices,
 Learned Curation, and Data & Privacy. A compact Library & Controls block keeps
@@ -294,7 +304,11 @@ or the publisher itself. Press `a` to open Article Actions, then choose Tune
 your feed. One three-step control replaces the older list of separate commands:
 choose More, No signal, or Less; choose the exact subject or source; then choose
 7 days or Lasting. “No signal” reverses that article's inferred reading signals
-without treating an important story as an unwanted subject.
+without treating an important story as an unwanted subject. It also prevents
+later views, reading time, saves, original-article opens, and summaries from
+relearning that story, including after restarting PYIN. Views still appear in
+History. Resetting learned history clears this suppression along with the
+inferred signals while preserving explicit interests.
 
 These deliberate choices form an interest graph in Profile. Lasting and
 temporary nodes are shown with their exact weight, type, and expiry, and every
@@ -308,9 +322,13 @@ freshness, topic, location, source-feedback, trend, search, and alert signals
 with the editable interest graph in a single ranking pass. There is no version
 switch or shadow ranker to configure. Every card still explains its strongest
 score components, and AI is never used to choose the feed order.
+With the same articles, settings, and scoring time, ranking and coverage groups
+are reproducible across launches and database insertion order. Equal scores use
+stable article identities to resolve ties.
 
-PYIN also records which feed cards were on screen while the reader was focused—not
-merely fetched—in 15-minute de-duplicated buckets. This local exposure ledger is the groundwork
+PYIN also records feed cards whose actual bounds intersect the viewport while
+the reader is focused, in 15-minute de-duplicated buckets. Offscreen cached rows
+and collapsing hidden stories are excluded. This local exposure ledger is the groundwork
 for evaluating recommendations without mistaking an unseen article for a
 rejection. It follows the configured retention window, never leaves the
 device, does not yet influence ranking, and is cleared with learned history.
@@ -327,12 +345,14 @@ notifications. Manual Search intentionally remains unfiltered as a transparent
 escape hatch.
 
 The local profile learns deliberately weighted signals. Opening a synopsis is
-weak evidence; reading it for at least 12 seconds, saving it, opening the
+weak evidence; reading it for at least 12 focused seconds, saving it, opening the
 original, or requesting a TL;DR is stronger. Ordinary Mark Read is neutral.
 Terms are conservative named entities, recurring headline subjects, and
 confirmed catalog topics—not an unrestricted bag of every word in the RSS
 text. This can be disabled without erasing existing data; when disabled, stored
 memory stops affecting ranking and no new signals are added.
+The reading timer pauses when PYIN loses focus or is hidden and resumes for the
+same article. Leaving or switching articles starts a new reading interval.
 
 Recent and lasting memory are maintained separately. Recent memory decays at
 7% per day, while lasting memory decays at 0.6% per day. This lets a developing
@@ -434,8 +454,19 @@ Background refreshes are network-conscious. PYIN retains publisher-provided
 `ETag` and `Last-Modified` validators, detects identical feed bodies when those
 headers are unavailable, gradually checks unchanged feeds less often, and backs
 off temporarily failing feeds. Pressing `r` remains an explicit full refresh.
+Feed responses must contain a recognized RSS, Atom, or RSS 1.0 structure;
+HTML and unrelated XML are recorded as failures. Valid empty feeds remain valid.
+Previously cached responses are revalidated once before conditional responses
+are trusted after upgrading.
 Cross-publisher trending scores are calculated once after a real source check
 and cached; closing the panel does not rebuild its visible feed model.
+
+Profile → Source Health shows the last saved results for active feeds, including
+each failing publisher's error, consecutive failures, and last successful check.
+Reload status reads local data; Refresh feeds contacts active publishers. Failed
+checks keep cached stories available within the configured retention window,
+and successful checks clear prior errors. The same saved status is available with
+`chuchua-news sources --health` (`--all` also includes inactive sources).
 
 OPML makes existing public feed lists reusable instead of locking the catalog to
 one application:
@@ -463,6 +494,16 @@ The article cache and learned profile stay in
 `~/.local/state/chuchua-news/news.sqlite3`. No browsing history or profile is
 sent anywhere. An article excerpt is sent only to the AI provider you choose
 when you request an answer.
+
+Profile export/import transfers setup choices and explicit interests. Imports
+accept PYIN export formats 1–3 and complete, versioned legacy setup objects.
+Unrelated files, unsupported versions, malformed settings, and invalid interest
+entries are rejected before changing saved preferences. Settings and imported
+interests are saved together; a failed write leaves both unchanged. Older files
+without an interest graph keep existing explicit interests, while an explicitly
+empty graph clears them. Expired temporary interests are not restored. Importing
+a valid profile completes setup. Reading history, saved stories, and alerts are
+not included in the profile export.
 
 Useful checks:
 

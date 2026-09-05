@@ -22,20 +22,28 @@ Maintainer notes:
 
 ## Release checklist
 
-1. Update `manifest.json`, the backend user agent, and `CHANGELOG.md` to the
+1. Update `manifest.json`, backend `APP_VERSION` and user agent, and `CHANGELOG.md` to the
    same version.
 2. Run `python -m py_compile bin/chuchua-news tests/test_release.py`.
 3. Run `python -m unittest discover -s tests -v`.
-4. Run `omarchy plugin validate .` on current Omarchy.
-5. Run a full refresh from an empty temporary XDG state directory and review
+4. Run `node --test tests/test_reading_ui.cjs` and check the changed QML in the
+   native app. Plugin validation checks package structure, not rendered behavior.
+5. Run `omarchy plugin validate .` on current Omarchy.
+6. Run a full refresh from an empty temporary XDG state directory and review
    every source error.
-6. Verify App & Updates reports development checkouts as protected, then test a
+7. Verify App & Updates reports development checkouts as protected, then test a
    stable fast-forward and a validation-failure rollback in an isolated HOME.
-7. Commit, push `develop`, and wait for GitHub Actions to pass.
-8. Fast-forward `main`, push it, and wait for the release commit's Actions run.
-9. Install from the public GitHub URL into a clean Omarchy profile; test first
+8. Incorporate the current `main` into `develop`, commit the release, push
+   `develop`, and open a pull request into `main`.
+9. Wait for the required Python 3.13 and 3.14 checks on the final pull request
+   head, resolve conversations, and merge through the protected branch workflow.
+   Do not bypass branch protection or force-push production. Verify `main` CI.
+10. Install from the public GitHub URL into a clean Omarchy profile; test first
    launch, update, and removal.
-10. Tag the verified commit as `v<version>` and create the GitHub release.
-11. Submit the repository through the official Omarchy plugin form.
+11. Tag the verified `main` merge commit as `v<version>`, push the tag, and create
+    the GitHub release with user-facing changes and upgrade information.
+12. Verify the published tag, release, and tag CI. Keep `develop` aligned with
+    the production merge for subsequent work. The native updater follows `main`.
+13. Submit through the official Omarchy plugin form only for an initial listing.
 
 Do not tag a release while the worktree is dirty or CI is failing.

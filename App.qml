@@ -44,6 +44,7 @@ Item {
   readonly property bool setupComplete: Boolean(setupProfile.complete)
   readonly property var setupAppearance: setupProfile && setupProfile.appearance
     ? setupProfile.appearance : ({})
+  readonly property bool paperBackground: String(root.setupAppearance.background) === "paper"
   readonly property var footerLink: setupAppearance && setupAppearance.footer_link
     ? setupAppearance.footer_link : ({})
   readonly property string footerLinkLabel: String(footerLink.label || "").trim()
@@ -90,7 +91,21 @@ Item {
     ? Number(setupData.story_limit) : root.maxArticles
   readonly property bool compactDensity: Boolean(root.setupComplete
     && String(root.setupAppearance.density) === "compact")
+  readonly property bool storySeparators: String(root.setupAppearance.density) !== "classic"
   readonly property int storyRowHeight: compactDensity ? Style.space(88) : Style.space(112)
+  readonly property int libraryStoryRowHeight: compactDensity ? Style.space(76) : Style.space(94)
+
+  component StorySeparator: Rectangle {
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    anchors.leftMargin: Style.spacing.rowPaddingX
+    anchors.rightMargin: Style.spacing.rowPaddingX
+    height: Style.spacing.hairline
+    color: root.foreground
+    opacity: 0.16
+  }
+
   readonly property bool animateLogo: root.setting("animateLogo", true) !== false
     && String(root.setting("animateLogo", true)).toLowerCase() !== "false"
 
@@ -110,12 +125,27 @@ Item {
   property int historyCount: 0
   property int readCount: 0
   property var profileData: ({})
+  property var sourceHealthData: ({})
+  property bool pendingSourceHealthLoad: false
   property var applicationUpdateData: ({})
   property bool applicationUpdateCheckRemote: false
   property bool applicationUpdateLaunching: false
   property int applicationUpdateStartedTs: 0
   property int applicationUpdatePolls: 0
   property var learnedArticles: ({})
+  property var readingQueue: []
+  property var activeReadingEvent: null
+  readonly property bool readingEventsBusy: root.activeReadingEvent !== null
+    || root.readingQueue.length > 0
+  property int historyRevision: 0
+  property int activeHistoryRevision: 0
+  property int activeBootstrapHistoryRevision: 0
+  property int activeProfileHistoryRevision: 0
+  property bool pendingHistoryLoad: false
+  property string readingArticleId: ""
+  property real readingElapsedMs: 0
+  property bool readingClockRunning: false
+  property bool readingEngagementRecorded: false
   property int selectedIndex: 0
   property int savedIndex: 0
   property int historyIndex: 0
@@ -212,10 +242,14 @@ Item {
   onSelectedIndexChanged: root.feedbackTargetIndex = 0
 
   onViewModeChanged: {
-    if (root.viewMode !== "result") readingEngagementTimer.stop()
+    root.syncReadingEngagement()
     if (root.viewMode === "feed") impressionTimer.restart()
     if (!root.isArticleContext()) root.closeActionHud()
   }
+
+  onResultKindChanged: root.syncReadingEngagement()
+  onActiveArticleChanged: root.syncReadingEngagement()
+  onOpenedChanged: root.syncReadingEngagement()
 
   readonly property var profileTopics: profileData && profileData.topics
     ? profileData.topics : []
@@ -401,19 +435,22 @@ Item {
       root.backendPath, "bootstrap", "--interests", root.interests
     ]
     root.activeBootstrapRevision = root.feedMutationRevision
+    root.activeBootstrapHistoryRevision = root.historyRevision
     bootstrapProc.running = true
   }
 
-  function applyLibraryCounts(values) {
+  function applyLibraryCounts(values, historyRevision) {
     var counts = values || ({})
     if (counts.alerts !== undefined)
       root.alertCount = Math.max(0, Number(counts.alerts || 0))
     if (counts.bookmarks !== undefined)
       root.bookmarkCount = Math.max(0, Number(counts.bookmarks || 0))
-    if (counts.history !== undefined)
-      root.historyCount = Math.max(0, Number(counts.history || 0))
-    else if (counts.opened_articles !== undefined)
-      root.historyCount = Math.max(0, Number(counts.opened_articles || 0))
+    if (historyRevision !== undefined && historyRevision === root.historyRevision) {
+      if (counts.history !== undefined)
+        root.historyCount = Math.max(0, Number(counts.history || 0))
+      else if (counts.opened_articles !== undefined)
+        root.historyCount = Math.max(0, Number(counts.opened_articles || 0))
+    }
     if (counts.read !== undefined)
       root.readCount = Math.max(0, Number(counts.read || 0))
     else if (counts.read_articles !== undefined)
@@ -476,7 +513,7 @@ Item {
   }
 
   function close() {
-    readingEngagementTimer.stop()
+    root.resetReadingEngagement("")
     root.closingFromHost = true
     root.opened = false
     root.closingFromHost = false
@@ -698,30 +735,90 @@ Item {
   }
 
   function queueVisibleImpressions() {
-    if (!root.opened || !windowContent.Window.active || root.viewMode !== "feed"
+    if (!root.measurementWindowActive() || root.viewMode !== "feed"
         || root.articles.length === 0) return
     impressionTimer.restart()
   }
 
+  function measurementWindowActive() {
+    return root.opened && window.visible && windowContent.Window.active
+      && windowContent.Window.visibility !== Window.Hidden
+      && windowContent.Window.visibility !== Window.Minimized
+  }
+
+  function visibleHeadlineImpressions() {
+    var visible = []
+    if (!headlineList.visible || headlineList.width <= 0 || headlineList.height <= 0)
+      return visible
+    for (var i = 0; i < headlineList.count; i++) {
+      // Cached delegates can be well outside the viewport. Real geometry also
+      // accounts for partial rows, spacing, density, and collapsing dismissals.
+      var row = headlineList.itemAtIndex(i)
+      if (!row || !row.visible || row.opacity <= 0 || row.leavingFeed
+          || row.width <= 0 || row.height <= 0 || !row.modelData || !row.modelData.id)
+        continue
+      var bounds = row.mapToItem(headlineList, 0, 0, row.width, row.height)
+      if (bounds.x < headlineList.width && bounds.x + bounds.width > 0
+          && bounds.y < headlineList.height && bounds.y + bounds.height > 0)
+        visible.push({ id: String(row.modelData.id), position: i + 1 })
+    }
+    return visible
+  }
+
   function recordVisibleImpressions() {
-    if (!root.opened || !windowContent.Window.active || root.viewMode !== "feed"
+    if (!root.measurementWindowActive() || root.viewMode !== "feed"
         || root.articles.length === 0) return
     if (impressionProc.running) {
       root.pendingImpressions = true
       return
     }
-    var stride = Math.max(1, root.storyRowHeight + headlineList.spacing)
-    var first = Math.max(0, Math.floor(Math.max(0, headlineList.contentY) / stride))
-    var count = Math.max(1, Math.ceil(headlineList.height / stride) + 2)
-    var visible = []
-    for (var i = first; i < Math.min(root.articles.length, first + count); i++)
-      visible.push({ id: String(root.articles[i].id), position: i + 1 })
+    var visible = root.visibleHeadlineImpressions()
     if (visible.length === 0) return
     impressionProc.command = [
       root.backendPath, "impressions", "--items-json", JSON.stringify(visible),
       "--view", "feed"
     ]
     impressionProc.running = true
+  }
+
+  function resetReadingEngagement(articleId) {
+    readingEngagementTimer.stop()
+    root.readingArticleId = String(articleId || "")
+    root.readingElapsedMs = 0
+    root.readingClockRunning = false
+    root.readingEngagementRecorded = false
+  }
+
+  function syncReadingEngagement() {
+    var articleId = root.viewMode === "result" && root.resultKind === "rss"
+      && root.activeArticle ? String(root.activeArticle.id || "") : ""
+    if (articleId !== root.readingArticleId) root.resetReadingEngagement(articleId)
+    if (articleId === "" || root.readingEngagementRecorded) return
+
+    if (!root.measurementWindowActive()) {
+      if (root.readingClockRunning)
+        root.readingElapsedMs += Math.max(0, readingClock.elapsedMs())
+      root.readingClockRunning = false
+      readingEngagementTimer.stop()
+      return
+    }
+    if (!root.readingClockRunning) {
+      readingClock.restartMs()
+      root.readingClockRunning = true
+    }
+    var elapsed = root.readingElapsedMs + Math.max(0, readingClock.elapsedMs())
+    if (elapsed >= 12000) {
+      root.readingElapsedMs = 12000
+      root.readingClockRunning = false
+      root.readingEngagementRecorded = true
+      readingEngagementTimer.stop()
+      root.learnArticle(root.activeArticle, "engaged")
+    } else {
+      // Timer restarts discard their own elapsed time, so retain focused time
+      // separately and schedule only what remains after focus returns.
+      readingEngagementTimer.interval = Math.max(1, Math.ceil(12000 - elapsed))
+      readingEngagementTimer.restart()
+    }
   }
 
   function moveSavedCursor(delta) {
@@ -752,18 +849,81 @@ Item {
     if (!article || !article.id) return
     var signalName = String(signal || "open")
     var signalKey = String(article.id) + ":" + signalName
-    if (root.learnedArticles[signalKey]) return
-    var next = ({})
-    for (var key in root.learnedArticles) next[key] = true
-    next[signalKey] = true
-    root.learnedArticles = next
-    if (signalName === "open" && !Boolean(article.opened))
-      root.historyCount++
-    Quickshell.execDetached([
-      root.backendPath, "opened", "--id", String(article.id),
-      "--signal", signalName
-    ])
-    openedReload.restart()
+    if (signalName !== "open") {
+      if (root.learnedArticles[signalKey]) return
+      var next = ({})
+      for (var key in root.learnedArticles) next[key] = true
+      next[signalKey] = true
+      root.learnedArticles = next
+    } else {
+      // A view is an event; learning remains deduplicated by the backend.
+      root.historyRevision++
+      root.feedMutationRevision++
+    }
+    root.readingQueue = root.readingQueue.concat([{
+      articleId: String(article.id), signal: signalName, signalKey: signalKey
+    }])
+    root.startNextReadingEvent()
+  }
+
+  function startNextReadingEvent() {
+    if (readingEventProc.running || root.activeReadingEvent !== null
+        || profileResetProc.running || feedbackProc.running) return
+    if (root.readingQueue.length === 0) {
+      if (root.pendingHistoryLoad && root.viewMode === "history" && !historyProc.running)
+        root.loadHistory()
+      return
+    }
+    root.activeReadingEvent = root.readingQueue[0]
+    root.readingQueue = root.readingQueue.slice(1)
+    readingEventProc.command = [
+      root.backendPath, "opened", "--id", root.activeReadingEvent.articleId,
+      "--signal", root.activeReadingEvent.signal
+    ]
+    readingEventProc.running = true
+  }
+
+  function articlesWithViewState(values, payload) {
+    return (values || []).map(function(article) {
+      if (String(article.id) !== String(payload.article_id)) return article
+      var updated = ({})
+      for (var key in article) updated[key] = article[key]
+      updated.opened = Number(payload.opens || 0) > 0
+      updated.opens = Number(payload.opens || 0)
+      updated.last_opened_ts = payload.last_opened_ts
+      return updated
+    })
+  }
+
+  function finishReadingEvent(payload) {
+    var event = root.activeReadingEvent
+    if (!event) return
+    root.activeReadingEvent = null
+    if (event.signal !== "open" && (!payload.ok || payload.learning_enabled === false)) {
+      var next = ({})
+      for (var key in root.learnedArticles)
+        if (key !== event.signalKey) next[key] = true
+      root.learnedArticles = next
+    }
+    if (!payload.ok) {
+      root.statusText = payload.error || "Could not save reading history"
+    } else {
+      if (event.signal === "open") {
+        root.historyRevision++
+        root.feedMutationRevision++
+        root.applyLibraryCounts(payload.counts, root.historyRevision)
+        root.articles = root.articlesWithViewState(root.articles, payload)
+        root.searchResults = root.articlesWithViewState(root.searchResults, payload)
+        root.bookmarks = root.articlesWithViewState(root.bookmarks, payload)
+        root.historyArticles = root.articlesWithViewState(root.historyArticles, payload)
+        root.readArticles = root.articlesWithViewState(root.readArticles, payload)
+        if (root.activeArticle)
+          root.activeArticle = root.articlesWithViewState([root.activeArticle], payload)[0]
+        root.pendingHistoryLoad = true
+      }
+      if (event.signal === "open" || payload.applied) openedReload.restart()
+    }
+    Qt.callLater(function() { root.startNextReadingEvent() })
   }
 
   function openSelected() {
@@ -908,6 +1068,7 @@ Item {
 
   function showArticle(article) {
     if (!article || root.aiCancelled) return
+    root.resetReadingEngagement("")
     root.resetAiPresentation()
     root.closeActionHud()
     root.whySectionExpanded = false
@@ -933,7 +1094,7 @@ Item {
       || "This feed did not include a synopsis. You can open the article or request an AI TL;DR.")
     root.statusText = "RSS synopsis · no AI used"
     root.viewMode = "result"
-    readingEngagementTimer.restart()
+    root.syncReadingEngagement()
   }
 
   function showCoverageArticle(article) {
@@ -1092,9 +1253,32 @@ Item {
   }
 
   function loadHistory() {
-    if (historyProc.running) return
+    if (historyProc.running || root.readingEventsBusy || profileResetProc.running) {
+      root.pendingHistoryLoad = true
+      return
+    }
+    root.pendingHistoryLoad = false
+    root.activeHistoryRevision = root.historyRevision
     historyProc.command = [root.backendPath, "history", "--limit", "500"]
     historyProc.running = true
+  }
+
+  function applyHistoryPayload(payload) {
+    if (root.activeHistoryRevision !== root.historyRevision
+        || root.readingEventsBusy || profileResetProc.running) {
+      root.pendingHistoryLoad = true
+      return
+    }
+    if (!payload.ok) root.statusText = payload.error || "Could not load viewed history"
+    else {
+      root.historyArticles = payload.articles || []
+      root.historyCount = payload.count !== undefined
+        ? Number(payload.count) : root.historyArticles.length
+      root.historyIndex = Math.max(0,
+        Math.min(root.historyIndex, root.historyArticles.length - 1))
+      if (root.viewMode === "history")
+        root.statusText = String(root.historyCount) + " viewed stories · stored locally"
+    }
   }
 
   function showHistory() {
@@ -1118,7 +1302,18 @@ Item {
   function loadProfile() {
     if (profileProc.running) return
     profileProc.command = [root.backendPath, "profile"]
+    root.activeProfileHistoryRevision = root.historyRevision
     profileProc.running = true
+  }
+
+  function loadSourceHealth() {
+    if (sourceHealthProc.running) {
+      root.pendingSourceHealthLoad = true
+      return
+    }
+    root.pendingSourceHealthLoad = false
+    sourceHealthProc.command = [root.backendPath, "sources", "--health"]
+    sourceHealthProc.running = true
   }
 
   function loadApplicationUpdateStatus(checkRemote) {
@@ -1424,15 +1619,6 @@ Item {
       command.push("--target", String(target.key))
     feedbackProc.command = command
     feedbackProc.running = true
-    if (action === "not-interest") {
-      var next = ({})
-      for (var key in root.learnedArticles) next[key] = root.learnedArticles[key]
-      for (var i = 0; i < 5; i++) {
-        var signal = ["open", "engaged", "bookmark", "external", "summary"][i]
-        next[String(article.id) + ":" + signal] = true
-      }
-      root.learnedArticles = next
-    }
     root.statusText = "Saving explicit feedback locally…"
   }
 
@@ -1467,12 +1653,18 @@ Item {
 
   function resetProfileLearning() {
     if (profileResetProc.running) return
+    if (root.readingEventsBusy) {
+      root.statusText = "Finishing reading history before reset…"
+      return
+    }
     if (!root.confirmProfileReset) {
       root.confirmProfileReset = true
       root.statusText = "Press Confirm reset to forget reading and Show Less ranking signals"
       return
     }
     root.confirmProfileReset = false
+    root.historyRevision++
+    root.feedMutationRevision++
     root.statusText = "Forgetting learned reading and Show Less signals…"
     profileResetProc.command = [root.backendPath, "profile", "--reset-learning"]
     profileResetProc.running = true
@@ -1972,6 +2164,7 @@ Item {
         || root.returnViewMode === "history" || root.returnViewMode === "read")
       ? root.returnViewMode : "feed"
     root.viewMode = destination
+    if (destination === "history") root.loadHistory()
     if (leavingSearch) {
       searchField.text = ""
       root.searchQuery = ""
@@ -2057,7 +2250,7 @@ Item {
       root.setupData = setupPayload
       root.setupRevision++
       if (root.activeBootstrapRevision === root.feedMutationRevision)
-        root.applyLibraryCounts(payload.counts)
+        root.applyLibraryCounts(payload.counts, root.activeBootstrapHistoryRevision)
       if (!Boolean(setupPayload.profile && setupPayload.profile.complete)) {
         root.viewMode = "setup"
         root.statusText = "First run · your choices stay on this device"
@@ -2257,6 +2450,8 @@ Item {
           : "✓"
       }
       root.refreshOutcomeDetail = root.statusText
+      if (root.opened && root.viewMode === "profile" && profilePage.sourceHealthExpanded)
+        root.loadSourceHealth()
       refreshOutcomeTimer.restart()
       // Alert refreshes continue while PYIN is hidden, but ranking and QML
       // model rebuilding are only useful while the panel is actually open.
@@ -2426,21 +2621,37 @@ Item {
   }
 
   Process {
+    id: readingEventProc
+    stdout: StdioCollector { id: readingEventStdout; waitForEnd: true }
+    stderr: StdioCollector { id: readingEventStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) {
+        // Failed starts emit runningChanged without exited. Let normal exits
+        // consume their acknowledgement before handling this fallback.
+        var event = root.activeReadingEvent
+        Qt.callLater(function() {
+          if (event && root.activeReadingEvent === event && !readingEventProc.running)
+            root.finishReadingEvent({ ok: false, error: "Could not start reading history helper" })
+        })
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      var payload = root.parsePayload(readingEventStdout.text,
+        String(readingEventStderr.text || "Could not save reading history"))
+      if (exitCode !== 0 || Boolean(exitStatus)) payload.ok = false
+      root.finishReadingEvent(payload)
+    }
+  }
+
+  Process {
     id: historyProc
     stdout: StdioCollector { id: historyStdout; waitForEnd: true }
     stderr: StdioCollector { id: historyStderr; waitForEnd: true }
     onExited: function(exitCode) {
       var payload = root.parsePayload(historyStdout.text,
         String(historyStderr.text || "Could not load viewed history"))
-      if (!payload.ok) root.statusText = payload.error || "Could not load viewed history"
-      else {
-        root.historyArticles = payload.articles || []
-        root.historyCount = payload.count !== undefined
-          ? Number(payload.count) : root.historyArticles.length
-        root.historyIndex = Math.max(0,
-          Math.min(root.historyIndex, root.historyArticles.length - 1))
-        root.statusText = String(root.historyCount) + " viewed stories · stored locally"
-      }
+      root.applyHistoryPayload(payload)
+      Qt.callLater(function() { root.startNextReadingEvent() })
     }
   }
 
@@ -2537,6 +2748,7 @@ Item {
     onExited: function(exitCode) {
       var payload = root.parsePayload(feedbackStdout.text,
         String(feedbackStderr.text || "Could not save article feedback"))
+      Qt.callLater(function() { root.startNextReadingEvent() })
       if (!payload.ok) {
         root.statusText = payload.error || "Could not save article feedback"
         return
@@ -2567,6 +2779,20 @@ Item {
   }
 
   Process {
+    id: sourceHealthProc
+    stdout: StdioCollector { id: sourceHealthStdout; waitForEnd: true }
+    stderr: StdioCollector { id: sourceHealthStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parsePayload(sourceHealthStdout.text,
+        String(sourceHealthStderr.text || "Could not load source health"))
+      if (exitCode !== 0) payload.ok = false
+      root.sourceHealthData = payload
+      if (root.pendingSourceHealthLoad)
+        Qt.callLater(function() { root.loadSourceHealth() })
+    }
+  }
+
+  Process {
     id: profileProc
     stdout: StdioCollector { id: profileStdout; waitForEnd: true }
     stderr: StdioCollector { id: profileStderr; waitForEnd: true }
@@ -2576,7 +2802,7 @@ Item {
       if (!payload.ok) root.statusText = payload.error || "Could not load profile"
       else {
         root.profileData = payload
-        root.applyLibraryCounts(payload.counts)
+        root.applyLibraryCounts(payload.counts, root.activeProfileHistoryRevision)
         root.statusText = "Your curation profile · stored only on this device"
       }
     }
@@ -2614,10 +2840,15 @@ Item {
     onExited: function(exitCode) {
       var payload = root.parsePayload(profileResetStdout.text,
         String(profileResetStderr.text || "Could not reset learned history"))
+      Qt.callLater(function() { root.startNextReadingEvent() })
       if (!payload.ok) root.statusText = payload.error || "Could not reset learned history"
       else {
         root.profileData = payload
-        root.applyLibraryCounts(payload.counts)
+        root.historyRevision++
+        root.feedMutationRevision++
+        root.applyLibraryCounts(payload.counts, root.historyRevision)
+        root.historyArticles = []
+        root.pendingHistoryLoad = true
         root.learnedArticles = ({})
         root.statusText = "Learned reading and Show Less signals cleared · explicit choices kept"
         root.loadFeed(false, "profile-reset")
@@ -2705,15 +2936,13 @@ Item {
     onTriggered: root.refresh(true)
   }
 
+  ElapsedTimer { id: readingClock }
+
   Timer {
     id: readingEngagementTimer
     interval: 12000
     repeat: false
-    onTriggered: {
-      if (root.viewMode === "result" && root.resultKind === "rss"
-          && root.activeArticle)
-        root.learnArticle(root.activeArticle, "engaged")
-    }
+    onTriggered: root.syncReadingEngagement()
   }
 
   Timer {
@@ -2739,14 +2968,29 @@ Item {
     minimumSize: Qt.size(Style.space(620), Style.space(480))
 
     onVisibleChanged: {
+      root.syncReadingEngagement()
       if (!visible && root.opened && !root.closingFromHost) root.requestClose()
     }
+
+    Loader {
+      anchors.fill: parent
+      active: root.opened && root.paperBackground && root.viewMode !== "result"
+      sourceComponent: PaperBackground { ink: root.foreground }
+    }
+
     FocusScope {
       id: windowContent
       anchors.fill: parent
       anchors.margins: Style.spacing.panelPadding
       focus: true
-      Window.onActiveChanged: if (Window.active) root.queueVisibleImpressions()
+      Window.onActiveChanged: {
+        root.syncReadingEngagement()
+        if (Window.active) root.queueVisibleImpressions()
+      }
+      Window.onVisibilityChanged: {
+        root.syncReadingEngagement()
+        root.queueVisibleImpressions()
+      }
 
       Shortcut {
         sequence: "Backspace"
@@ -3250,7 +3494,10 @@ Item {
             currentIndex: root.selectedIndex
             boundsBehavior: Flickable.StopAtBounds
             onContentYChanged: root.queueVisibleImpressions()
+            onContentHeightChanged: root.queueVisibleImpressions()
             onHeightChanged: root.queueVisibleImpressions()
+            onWidthChanged: root.queueVisibleImpressions()
+            onVisibleChanged: root.queueVisibleImpressions()
 
             delegate: CursorSurface {
               required property var modelData
@@ -3264,6 +3511,10 @@ Item {
               accent: root.accent
               hasCursor: root.cursorActive && index === root.selectedIndex
               clip: true
+
+              StorySeparator {
+                visible: root.storySeparators && index < headlineList.count - 1
+              }
 
               Behavior on height {
                 NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
@@ -3900,10 +4151,14 @@ Item {
                 required property var modelData
                 required property int index
                 width: savedList.width
-                height: Style.space(94)
+                height: root.libraryStoryRowHeight
                 foreground: root.foreground
                 accent: root.accent
                 hasCursor: root.savedCursorActive && index === root.savedIndex
+
+                StorySeparator {
+                  visible: root.storySeparators && index < savedList.count - 1
+                }
 
                 Text {
                   id: savedMeta
@@ -4072,10 +4327,14 @@ Item {
                 required property var modelData
                 required property int index
                 width: historyList.width
-                height: Style.space(94)
+                height: root.libraryStoryRowHeight
                 foreground: root.foreground
                 accent: root.accent
                 hasCursor: root.historyCursorActive && index === root.historyIndex
+
+                StorySeparator {
+                  visible: root.storySeparators && index < historyList.count - 1
+                }
 
                 Text {
                   id: historyMeta
@@ -4241,10 +4500,14 @@ Item {
                 required property var modelData
                 required property int index
                 width: readList.width
-                height: Style.space(94)
+                height: root.libraryStoryRowHeight
                 foreground: root.foreground
                 accent: root.accent
                 hasCursor: root.readCursorActive && index === root.readIndex
+
+                StorySeparator {
+                  visible: root.storySeparators && index < readList.count - 1
+                }
 
                 Text {
                   id: readMeta
@@ -4518,6 +4781,9 @@ Item {
             storage: root.profileStorage
             exposure: root.profileExposure
             updateData: root.applicationUpdateData
+            sourceHealthData: root.sourceHealthData
+            sourceHealthBusy: sourceHealthProc.running
+            feedsRefreshing: refreshProc.running
             showLessTermText: root.showLessTermSummary()
             showLessSourceText: root.showLessSourceSummary()
             profileBusy: profileProc.running
@@ -4527,7 +4793,7 @@ Item {
             aiPresetBusy: systemAiPresetProc.running
             interestBusy: interestProc.running
             transferBusy: profileTransferProc.running
-            resetBusy: profileResetProc.running
+            resetBusy: profileResetProc.running || root.readingEventsBusy
             updateBusy: updateStatusProc.running
             updateLaunching: root.applicationUpdateLaunching
             confirmReset: root.confirmProfileReset
@@ -4558,6 +4824,8 @@ Item {
             onResetRequested: root.resetProfileLearning()
             onUpdateCheckRequested: root.loadApplicationUpdateStatus(true)
             onUpdateInstallRequested: root.installApplicationUpdate()
+            onSourceHealthRequested: root.loadSourceHealth()
+            onFeedsRefreshRequested: root.refresh(false)
           }
 
           Flickable {

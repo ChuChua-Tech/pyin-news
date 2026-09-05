@@ -34,7 +34,7 @@ import xml.etree.ElementTree as ET
 
 APP_ID = "chuchua-news"
 PLUGIN_ID = "tech.chuchua.news"
-APP_VERSION = "0.19.0"
+APP_VERSION = "0.20.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -46,7 +46,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.19.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.20.0 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -173,7 +173,9 @@ TOPIC_CATALOG = [
 ]
 TOPIC_VALUES = {str(topic["value"]) for topic in TOPIC_CATALOG}
 
-SETUP_PROFILE_VERSION = 5
+SETUP_PROFILE_VERSION = 6
+PROFILE_EXPORT_FORMAT = "chuchua-news-profile"
+PROFILE_EXPORT_VERSION = 3
 MAX_CUSTOM_SOURCES = 50
 NAVIGATION_ITEMS = ("bookmarks", "history", "alerts", "refresh")
 DEFAULT_SYSTEM_AI_PRESET = "balanced"
@@ -363,6 +365,8 @@ def db() -> sqlite3.Connection:
           etag TEXT NOT NULL DEFAULT '',
           last_modified TEXT NOT NULL DEFAULT '',
           content_hash TEXT NOT NULL DEFAULT '',
+          validated_feed INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT NOT NULL DEFAULT '',
           last_checked_ts INTEGER NOT NULL DEFAULT 0,
           last_success_ts INTEGER NOT NULL DEFAULT 0,
           unchanged_streak INTEGER NOT NULL DEFAULT 0,
@@ -406,6 +410,25 @@ def db() -> sqlite3.Connection:
     article_columns = {
         str(row[1]) for row in conn.execute("PRAGMA table_info(articles)")
     }
+    fetch_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(source_fetch_state)")
+    }
+    if not {"validated_feed", "last_error"}.issubset(fetch_columns):
+        # Several UI helpers can start together after an update. Recheck the
+        # schema under a write lock so only one applies these additions.
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            fetch_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(source_fetch_state)")
+            }
+            if "validated_feed" not in fetch_columns:
+                conn.execute(
+                    "ALTER TABLE source_fetch_state ADD COLUMN validated_feed INTEGER NOT NULL DEFAULT 0"
+                )
+            if "last_error" not in fetch_columns:
+                conn.execute(
+                    "ALTER TABLE source_fetch_state ADD COLUMN last_error TEXT NOT NULL DEFAULT ''"
+                )
     if "trend_score" not in article_columns:
         conn.execute(
             "ALTER TABLE articles ADD COLUMN trend_score INTEGER NOT NULL DEFAULT 0"
@@ -662,7 +685,8 @@ def http_get(url: str, max_bytes: int, timeout: int = FETCH_TIMEOUT) -> bytes:
     return data
 
 
-def parse_feed(source: dict[str, Any], raw: bytes, now: int) -> list[dict[str, Any]]:
+def parse_feed_root(raw: bytes) -> ET.Element:
+    """Recognize syndication documents before treating an HTTP response as a feed."""
     raw = raw.lstrip()
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:].lstrip()
@@ -676,13 +700,31 @@ def parse_feed(source: dict[str, Any], raw: bytes, now: int) -> list[dict[str, A
         repaired = raw.decode("utf-8", errors="replace")
         repaired = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", repaired)
         root = ET.fromstring(repaired.encode("utf-8"))
-    root_kind = local_name(root.tag)
-    if root_kind in {"rss", "rdf"}:
-        entries = [item for item in root.iter() if local_name(item.tag) == "item"]
-    elif root_kind == "feed":
-        entries = [item for item in root if local_name(item.tag) == "entry"]
+    if root.tag == "rss" and root.find("channel") is not None:
+        return root
+    if root.tag in {"{http://www.w3.org/2005/Atom}feed", "{http://purl.org/atom/ns#}feed"}:
+        return root
+    if (
+        root.tag == "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}RDF"
+        and root.find("{http://purl.org/rss/1.0/}channel") is not None
+    ):
+        return root
+    if local_name(root.tag) == "html":
+        raise ValueError("Publisher returned an HTML page instead of an RSS or Atom feed")
+    raise ValueError("Response is not a recognized RSS, Atom, or RSS 1.0 feed")
+
+
+def parse_feed(
+    source: dict[str, Any], raw: bytes, now: int, parsed_root: ET.Element | None = None
+) -> list[dict[str, Any]]:
+    root = parsed_root if parsed_root is not None else parse_feed_root(raw)
+    if root.tag == "rss":
+        entries = root.findall("channel/item")
+    elif local_name(root.tag) == "rdf":
+        entries = root.findall("{http://purl.org/rss/1.0/}item")
     else:
-        entries = [item for item in root.iter() if local_name(item.tag) in {"item", "entry"}]
+        namespace = root.tag.rsplit("}", 1)[0] + "}"
+        entries = root.findall(namespace + "entry")
 
     articles: list[dict[str, Any]] = []
     for entry in entries[:80]:
@@ -844,6 +886,58 @@ def load_sources(active_only: bool = True) -> list[dict[str, Any]]:
     return filter_sources(sources, profile)
 
 
+def source_health(active_only: bool = True) -> dict[str, Any]:
+    """Report persisted feed health without making network requests."""
+    now = int(time.time())
+    conn = db()
+    try:
+        profile = load_setup_profile(conn)
+        states = {
+            str(row["source_id"]): dict(row)
+            for row in conn.execute("SELECT * FROM source_fetch_state")
+        }
+    finally:
+        conn.close()
+    catalog = source_catalog(profile)
+    active_ids = {str(source["id"]) for source in filter_sources(catalog, profile)}
+    rows = []
+    counts = {"total": 0, "healthy": 0, "failing": 0, "unchecked": 0}
+    for source in catalog:
+        source_key = str(source["id"])
+        active = source_key in active_ids
+        if active_only and not active:
+            continue
+        state = states.get(source_key, {})
+        if str(state.get("url") or "") != str(source["url"]):
+            state = {}
+        checked = int(state.get("last_checked_ts") or 0)
+        succeeded = int(state.get("last_success_ts") or 0) if state.get("validated_feed") else 0
+        failures = int(state.get("consecutive_failures") or 0)
+        error = str(state.get("last_error") or "")
+        status = "failing" if failures or error else "healthy" if succeeded else "unchecked"
+        if status == "failing" and not error:
+            error = "Previous fetch failed. Refresh to see the current error."
+        rows.append({
+            "id": source_key,
+            "name": str(source["name"]),
+            "url": str(source["url"]),
+            "active": active,
+            "status": status,
+            "last_checked_ts": checked,
+            "last_success_ts": succeeded,
+            "last_checked_age": human_age(checked, now) if checked else "never",
+            "last_success_age": human_age(succeeded, now) if succeeded else "never",
+            "last_error": error,
+            "consecutive_failures": failures,
+            "next_fetch_ts": int(state.get("next_fetch_ts") or 0),
+        })
+        counts["total"] += 1
+        counts[status] += 1
+    priority = {"failing": 0, "unchecked": 1, "healthy": 2}
+    rows.sort(key=lambda row: (priority[row["status"]], row["name"].casefold(), row["id"]))
+    return {"ok": True, "checked_at": now, "sources": rows, "counts": counts}
+
+
 def trend_scope(active_source_names: list[str]) -> str:
     value = "\n".join(sorted(set(active_source_names), key=str.casefold))
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
@@ -958,10 +1052,12 @@ def fetch_source(
             raw, validators = http_get_conditional(
                 url,
                 MAX_FEED_BYTES,
-                etag=str(state.get("etag") or ""),
-                last_modified=str(state.get("last_modified") or ""),
+                etag=str(state.get("etag") or "") if state.get("validated_feed") else "",
+                last_modified=str(state.get("last_modified") or "") if state.get("validated_feed") else "",
             )
         if raw is None:
+            if not state.get("validated_feed"):
+                raise ValueError("Not-modified response without a previously validated feed")
             return {
                 "source": source,
                 "articles": [],
@@ -971,7 +1067,8 @@ def fetch_source(
                 "content_hash": str(state.get("content_hash") or ""),
             }
         content_hash = hashlib.sha256(raw).hexdigest()
-        if content_hash == str(state.get("content_hash") or ""):
+        root = parse_feed_root(raw)
+        if state.get("validated_feed") and content_hash == str(state.get("content_hash") or ""):
             return {
                 "source": source,
                 "articles": [],
@@ -982,7 +1079,7 @@ def fetch_source(
             }
         return {
             "source": source,
-            "articles": parse_feed(source, raw, now),
+            "articles": parse_feed(source, raw, now, parsed_root=root),
             "error": "",
             "status": "changed",
             "validators": validators,
@@ -1014,7 +1111,7 @@ def save_fetch_state(
     if status == "error":
         failures = int(previous.get("consecutive_failures") or 0) + 1
         unchanged_streak = int(previous.get("unchanged_streak") or 0)
-        last_success = int(previous.get("last_success_ts") or 0)
+        last_success = int(previous.get("last_success_ts") or 0) if previous.get("validated_feed") else 0
         delay = min(
             MAX_FAILURE_BACKOFF_SECONDS,
             base_interval_seconds * (2 ** min(failures, 6)),
@@ -1037,8 +1134,9 @@ def save_fetch_state(
         """
         INSERT INTO source_fetch_state
           (source_id, url, etag, last_modified, content_hash, last_checked_ts,
-           last_success_ts, unchanged_streak, consecutive_failures, next_fetch_ts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           last_success_ts, unchanged_streak, consecutive_failures, next_fetch_ts,
+           validated_feed, last_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET
           url = excluded.url,
           etag = excluded.etag,
@@ -1048,7 +1146,9 @@ def save_fetch_state(
           last_success_ts = excluded.last_success_ts,
           unchanged_streak = excluded.unchanged_streak,
           consecutive_failures = excluded.consecutive_failures,
-          next_fetch_ts = excluded.next_fetch_ts
+          next_fetch_ts = excluded.next_fetch_ts,
+          validated_feed = excluded.validated_feed,
+          last_error = excluded.last_error
         """,
         (
             str(source["id"]),
@@ -1065,6 +1165,8 @@ def save_fetch_state(
             unchanged_streak,
             failures,
             now + delay,
+            int(bool(previous.get("validated_feed"))) if status == "error" else 1,
+            str(result.get("error") or "")[:500] if status == "error" else "",
         ),
     )
 
@@ -1177,7 +1279,7 @@ def refresh(background: bool = False, interval_minutes: int = 30) -> dict[str, A
     conn.close()
     notifications_sent = send_alert_notifications(alert_hits)
     return {
-        "ok": total > 0 or not sources,
+        "ok": total > 0 or not sources or any(not result["error"] for result in results),
         "inserted": inserted,
         "updated": updated,
         "total": total,
@@ -1509,7 +1611,7 @@ def active_interest_nodes(
     rows = conn.execute(
         "SELECT term, scope, weight, expires_ts, origin, created_ts, updated_ts "
         "FROM interest_nodes WHERE expires_ts IS NULL OR expires_ts > ? "
-        "ORDER BY ABS(weight) DESC, updated_ts DESC",
+        "ORDER BY ABS(weight) DESC, updated_ts DESC, term ASC, scope ASC",
         (timestamp,),
     ).fetchall()
     return [
@@ -1589,6 +1691,11 @@ def apply_article_signal(
     if signal not in SIGNAL_DELTAS:
         raise ValueError("invalid learning signal")
     timestamp = int(now or time.time())
+    if signal in {"open", "engaged", "bookmark", "external", "summary"} and conn.execute(
+        "SELECT 1 FROM article_feedback WHERE article_id = ? AND action = 'not-interest'",
+        (article_id_value,),
+    ).fetchone():
+        return {"applied": False, "terms": [], "suppressed": True}
     existing = conn.execute(
         "SELECT 1 FROM curation_signals WHERE article_id = ? AND signal = ?",
         (article_id_value, signal),
@@ -1716,6 +1823,8 @@ def record_article_feedback(
     if action == "not-interest":
         removed_signals: list[str] = []
         with conn:
+            # Serialize with reading writes before inspecting their signals.
+            conn.execute("BEGIN IMMEDIATE")
             for signal in ("open", "engaged", "bookmark", "external", "summary"):
                 if remove_article_signal(conn, article_id_value, signal, now):
                     removed_signals.append(signal)
@@ -2032,6 +2141,7 @@ def default_setup_profile(legacy_topics: list[str] | None = None) -> dict[str, A
         "appearance": {
             "theme": "omarchy",
             "density": "calm",
+            "background": "plain",
             "footer_link": {"label": "", "url": ""},
         },
         "location": {"country": "", "region": "", "city": ""},
@@ -2072,7 +2182,10 @@ def normalize_setup_profile(value: Any, legacy_topics: list[str] | None = None) 
 
     appearance = raw.get("appearance", {}) if isinstance(raw.get("appearance"), dict) else {}
     result["appearance"]["density"] = (
-        str(appearance.get("density")) if appearance.get("density") in {"calm", "compact"} else "calm"
+        str(appearance.get("density")) if appearance.get("density") in {"calm", "compact", "classic"} else "calm"
+    )
+    result["appearance"]["background"] = (
+        str(appearance.get("background")) if appearance.get("background") in ("plain", "paper") else "plain"
     )
     result["appearance"]["footer_link"] = normalize_footer_link(
         appearance.get("footer_link")
@@ -2279,6 +2392,33 @@ def setup_state(profile: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def prepare_setup_profile(
+    parsed: dict[str, Any], legacy_topics: list[str] | None = None
+) -> dict[str, Any]:
+    normalized = normalize_setup_profile(parsed, legacy_topics)
+    normalized["complete"] = True
+    if normalized["ai"]["mode"] == "local":
+        local_completion_url(normalized["ai"]["local_url"])
+        if not normalized["ai"]["local_model"].strip():
+            raise ValueError("local AI model is empty")
+    return normalized
+
+
+def write_setup_profile(conn: sqlite3.Connection, normalized: dict[str, Any]) -> None:
+    """Write within the caller's transaction, including any imported interests."""
+    topic_mix = normalized["topics"]["must"] + normalized["topics"]["interested"]
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES('setup_profile', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (json.dumps(normalized, ensure_ascii=False, separators=(",", ":")),),
+    )
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES('selected_topics', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (json.dumps(topic_mix, separators=(",", ":")),),
+    )
+
+
 def save_setup_profile(profile_json: str) -> dict[str, Any]:
     try:
         parsed = json.loads(profile_json)
@@ -2287,31 +2427,14 @@ def save_setup_profile(profile_json: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("setup profile must be a JSON object")
     conn = db()
-    normalized = normalize_setup_profile(parsed, saved_topics(conn))
-    normalized["complete"] = True
-    if normalized["ai"]["mode"] == "local":
-        try:
-            local_completion_url(normalized["ai"]["local_url"])
-        except Exception:
-            conn.close()
-            raise
-        if not normalized["ai"]["local_model"].strip():
-            conn.close()
-            raise ValueError("local AI model is empty")
-    topic_mix = normalized["topics"]["must"] + normalized["topics"]["interested"]
-    with conn:
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES('setup_profile', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (json.dumps(normalized, ensure_ascii=False, separators=(",", ":")),),
-        )
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES('selected_topics', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (json.dumps(topic_mix, separators=(",", ":")),),
-        )
-    conn.close()
-    return setup_state(normalized)
+    try:
+        normalized = prepare_setup_profile(parsed, saved_topics(conn))
+        result = setup_state(normalized)
+        with conn:
+            write_setup_profile(conn, normalized)
+        return result
+    finally:
+        conn.close()
 
 
 def set_article_back_action(action: str) -> dict[str, Any]:
@@ -2405,8 +2528,8 @@ def export_setup_profile(path_value: str) -> dict[str, Any]:
     interest_graph = active_interest_nodes(conn)
     conn.close()
     payload = {
-        "format": "chuchua-news-profile",
-        "format_version": 3,
+        "format": PROFILE_EXPORT_FORMAT,
+        "format_version": PROFILE_EXPORT_VERSION,
         "exported_at": dt.datetime.now(tz=dt.timezone.utc).isoformat(),
         "profile": load_setup_profile(),
         "interest_graph": interest_graph,
@@ -2415,52 +2538,209 @@ def export_setup_profile(path_value: str) -> dict[str, Any]:
     return {"ok": True, "path": str(path.resolve()), "profile": payload["profile"]}
 
 
+def validate_imported_profile(raw: Any) -> None:
+    """Check exported shapes before permissive setup normalization can drop data."""
+    if not isinstance(raw, dict):
+        raise ValueError("profile must be a PYIN setup object")
+    version = raw.get("version")
+    if type(version) is not int or not 1 <= version <= SETUP_PROFILE_VERSION:
+        raise ValueError("unsupported or missing setup profile version")
+
+    # Earlier exports contain the same core fields. These additions may be
+    # absent only in the older schemas that predate them.
+    introduced = {
+        "behavior": 2, "blocked_keywords": 2, "ai.system_preset": 3,
+        "navigation": 4, "custom_sources": 5, "appearance.footer_link": 5,
+        "appearance.background": 6,
+    }
+
+    def check_shape(value: Any, template: Any, field: str = "profile") -> None:
+        if type(value) is not type(template):
+            raise ValueError(f"invalid profile field: {field}")
+        if isinstance(template, dict):
+            for key, expected in template.items():
+                child = f"{field}.{key}" if field != "profile" else key
+                if key not in value:
+                    if version < introduced.get(child, 1):
+                        continue
+                    raise ValueError(f"missing profile field: {child}")
+                check_shape(value[key], expected, child)
+        elif isinstance(template, list) and field != "custom_sources":
+            if any(not isinstance(item, str) for item in value):
+                raise ValueError(f"invalid profile list: {field}")
+
+    check_shape(raw, default_setup_profile())
+
+    def choice(field: str, value: Any, allowed: Any) -> None:
+        if value not in allowed:
+            raise ValueError(f"unsupported profile value: {field}")
+
+    choice("appearance.density", raw["appearance"]["density"], {"calm", "compact", "classic"})
+    if "background" in raw["appearance"]:
+        choice("appearance.background", raw["appearance"]["background"], {"plain", "paper"})
+    choice("reading_minutes", raw["reading_minutes"], {5, 15, 30})
+    choice("viewpoint.mode", raw["viewpoint"]["mode"], VIEWPOINT_BY_VALUE)
+    choice("ai.mode", raw["ai"]["mode"], {"system", "local", "off"})
+    if raw["ai"]["mode"] == "local":
+        local_completion_url(raw["ai"]["local_url"])
+        if not raw["ai"]["local_model"].strip():
+            raise ValueError("local AI model is empty")
+    if "system_preset" in raw["ai"]:
+        choice("ai.system_preset", raw["ai"]["system_preset"], SYSTEM_AI_PRESET_BY_VALUE)
+    lists = {
+        "languages": (raw["languages"], {item["value"] for item in LANGUAGE_CATALOG}),
+        "source_types": (raw["source_types"], SOURCE_TYPE_VALUES),
+    }
+    for field, (values, allowed) in lists.items():
+        if not values or any(value not in allowed for value in values):
+            raise ValueError(f"unsupported profile list: {field}")
+    for field, values in raw["topics"].items():
+        if field in {"must", "interested", "muted"}:
+            # Canada was a topic before geography became a separate choice.
+            for value in values:
+                choice(f"topics.{field}", value, TOPIC_VALUES | {"canada"})
+    if "navigation" in raw:
+        for value in raw["navigation"]["items"]:
+            choice("navigation.items", value, NAVIGATION_ITEMS)
+    for field, value, low, high in (
+        ("viewpoint.discovery_percent", raw["viewpoint"]["discovery_percent"], 0, 60),
+        ("privacy.retention_days", raw["privacy"]["retention_days"], 7, 365),
+        ("notifications.max_per_day", raw["notifications"]["max_per_day"], 1, 50),
+    ):
+        if not low <= value <= high:
+            raise ValueError(f"profile value out of range: {field}")
+    for field in ("quiet_start", "quiet_end"):
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", raw["notifications"][field]):
+            raise ValueError(f"invalid notification time: {field}")
+    if len(raw.get("blocked_keywords", [])) > 50:
+        raise ValueError("profile contains too many blocked keywords")
+    footer = raw["appearance"].get("footer_link", {})
+    if footer and (footer["label"] or footer["url"]):
+        if not footer["label"].strip() or not normalize_feed_url(footer["url"]):
+            raise ValueError("invalid profile footer link")
+    custom = raw.get("custom_sources", [])
+    if len(custom) > MAX_CUSTOM_SOURCES:
+        raise ValueError("profile contains too many custom sources")
+    source_template = {
+        "id": "", "name": "", "url": "", "topics": [], "languages": [],
+        "types": [], "regions": [], "custom": True,
+    }
+    source_ids: set[str] = set()
+    for source in custom:
+        check_shape(source, source_template, "custom_source")
+        if not source["name"].strip() or not normalize_feed_url(source["url"]):
+            raise ValueError("invalid custom source name or feed URL")
+        source_id_value = source["id"]
+        if not re.fullmatch(r"custom-[a-z0-9][a-z0-9-]{0,92}", source_id_value):
+            raise ValueError("invalid custom source id")
+        if source_id_value in source_ids:
+            raise ValueError("duplicate custom source id")
+        source_ids.add(source_id_value)
+    if len(normalize_custom_sources(custom)) != len(custom):
+        raise ValueError("profile contains duplicate or invalid custom sources")
+
+
+def validate_imported_interests(graph: Any, now: int) -> list[dict[str, Any]]:
+    if not isinstance(graph, list):
+        raise ValueError("profile interest_graph must be an array")
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for node in graph:
+        if not isinstance(node, dict):
+            raise ValueError("invalid profile interest entry")
+        term = node.get("term")
+        if not isinstance(term, str) or ":" not in term:
+            raise ValueError("invalid profile interest target")
+        kind, label = term.split(":", 1)
+        kind = kind.casefold().strip()
+        if kind not in {"entity", "subject", "keyword", "topic", "source"} or not label.strip():
+            raise ValueError("invalid profile interest target")
+        # Source names in genuine exports can exceed the interactive target
+        # editor's 120-character limit. Preserve them when restoring a backup.
+        term = _interest_key(kind, label)
+        if not term:
+            raise ValueError("invalid profile interest target")
+        scope = node.get("scope")
+        if scope not in ("lasting", "temporary"):
+            raise ValueError("invalid profile interest scope")
+        weight = node.get("weight")
+        if type(weight) not in (int, float) or not -10 <= weight <= 10:
+            raise ValueError("profile interest weight must be a finite number from -10 to 10")
+        if "expires_ts" not in node:
+            raise ValueError("missing profile interest expiry")
+        expires = node["expires_ts"]
+        if scope == "temporary":
+            if type(expires) is not int or not 0 < expires <= 2**63 - 1:
+                raise ValueError("invalid temporary interest expiry")
+        elif expires is not None:
+            raise ValueError("lasting interests must not expire")
+        identity = (term, scope)
+        if identity in seen:
+            raise ValueError("duplicate profile interest target and scope")
+        seen.add(identity)
+        if abs(weight) < 0.01 or (expires is not None and expires <= now):
+            continue
+        result.append({"term": term, "scope": scope, "weight": float(weight), "expires_ts": expires})
+    return result
+
+
 def import_setup_profile(path_value: str) -> dict[str, Any]:
     path = Path(path_value).expanduser().resolve()
-    if path.stat().st_size > 1024 * 1024:
+    with path.open("rb") as handle:
+        contents = handle.read(1024 * 1024 + 1)
+    if len(contents) > 1024 * 1024:
         raise ValueError("profile file is too large")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    raw = payload.get("profile") if isinstance(payload, dict) and "profile" in payload else payload
-    result = save_setup_profile(json.dumps(raw, ensure_ascii=False))
-    if not isinstance(payload, dict):
+
+    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("profile JSON contains duplicate fields")
+            result[key] = value
         return result
-    graph = payload.get("interest_graph")
-    if isinstance(graph, list):
-        now = int(time.time())
-        conn = db()
-        imported = 0
+
+    def reject_constant(value: str) -> None:
+        raise ValueError("profile JSON must contain finite numbers")
+
+    payload = json.loads(contents, object_pairs_hook=unique_fields, parse_constant=reject_constant)
+    if not isinstance(payload, dict):
+        raise ValueError("profile file must contain a PYIN profile object")
+    raw = payload
+    if any(key in payload for key in ("format", "format_version", "profile")):
+        if payload.get("format") != PROFILE_EXPORT_FORMAT:
+            raise ValueError("file is not a PYIN profile export")
+        version = payload.get("format_version")
+        if type(version) is not int or not 1 <= version <= PROFILE_EXPORT_VERSION:
+            raise ValueError("unsupported or missing profile export version")
+        if version >= 2 and "interest_graph" not in payload:
+            raise ValueError("profile export is missing its interest_graph")
+        raw = payload.get("profile")
+    validate_imported_profile(raw)
+    now = int(time.time())
+    graph = (
+        validate_imported_interests(payload["interest_graph"], now)
+        if "interest_graph" in payload else None
+    )
+    normalized = prepare_setup_profile(raw)
+    result = setup_state(normalized)
+    conn = db()
+    try:
         with conn:
-            conn.execute("DELETE FROM interest_nodes")
-            for value in graph[:500]:
-                if not isinstance(value, dict):
-                    continue
-                try:
-                    term = normalize_interest_target(str(value.get("term") or ""))
-                    scope = str(value.get("scope") or "lasting")
-                    if scope not in {"lasting", "temporary"}:
-                        continue
-                    weight = max(-10.0, min(10.0, float(value.get("weight", 0))))
-                    expires_ts = (
-                        int(value.get("expires_ts"))
-                        if scope == "temporary" and value.get("expires_ts") else None
-                    )
-                except (TypeError, ValueError):
-                    continue
-                if abs(weight) < 0.01 or (expires_ts is not None and expires_ts <= now):
-                    continue
-                conn.execute(
+            write_setup_profile(conn, normalized)
+            if graph is not None:
+                conn.execute("DELETE FROM interest_nodes")
+                conn.executemany(
                     "INSERT INTO interest_nodes"
                     "(term, scope, weight, expires_ts, origin, created_ts, updated_ts) "
-                    "VALUES(?, ?, ?, ?, 'profile-import', ?, ?) "
-                    "ON CONFLICT(term, scope) DO UPDATE SET "
-                    "weight = excluded.weight, expires_ts = excluded.expires_ts, "
-                    "origin = excluded.origin, updated_ts = excluded.updated_ts",
-                    (term, scope, weight, expires_ts, now, now),
+                    "VALUES(?, ?, ?, ?, 'profile-import', ?, ?)",
+                    [(node["term"], node["scope"], node["weight"], node["expires_ts"], now, now)
+                     for node in graph],
                 )
-                imported += 1
+        if graph is not None:
+            result["imported_interest_nodes"] = len(graph)
+        return result
+    finally:
         conn.close()
-        result["imported_interest_nodes"] = imported
-    return result
 
 
 def export_sources_opml(path_value: str, active_only: bool = False) -> dict[str, Any]:
@@ -2591,7 +2871,7 @@ def profile_memory(conn: sqlite3.Connection, now: int) -> dict[str, dict[str, fl
     for row in conn.execute(
         "SELECT term, short_weight, long_weight, updated_ts, signal_count "
         "FROM curation_terms ORDER BY "
-        "ABS(short_weight) + ABS(long_weight) DESC LIMIT 240"
+        "ABS(short_weight) + ABS(long_weight) DESC, term ASC LIMIT 240"
     ):
         short = _memory_value(
             float(row["short_weight"]), int(row["updated_ts"]), now, SHORT_MEMORY_DECAY
@@ -2623,7 +2903,7 @@ def source_memory(conn: sqlite3.Connection, now: int) -> dict[str, dict[str, flo
     for row in conn.execute(
         "SELECT source, short_weight, long_weight, updated_ts, signal_count "
         "FROM curation_sources ORDER BY "
-        "ABS(short_weight) + ABS(long_weight) DESC LIMIT 200"
+        "ABS(short_weight) + ABS(long_weight) DESC, source ASC LIMIT 200"
     ):
         short = _memory_value(
             float(row["short_weight"]), int(row["updated_ts"]), now, SHORT_MEMORY_DECAY
@@ -2872,6 +3152,7 @@ def reset_learning() -> dict[str, Any]:
         conn.execute("DELETE FROM curation_sources")
         conn.execute("DELETE FROM curation_signals")
         conn.execute("DELETE FROM article_impressions")
+        conn.execute("DELETE FROM article_feedback WHERE action = 'not-interest'")
         conn.execute(
             "UPDATE dismissed_articles SET terms = '[]', source = '', learning_applied = 0"
         )
@@ -2959,7 +3240,7 @@ def prepare_interest_matchers(
 ) -> list[tuple[str, str, str, re.Pattern[str] | None]]:
     """Resolve interest metadata and boundaries once per feed calculation."""
     matchers: list[tuple[str, str, str, re.Pattern[str] | None]] = []
-    for term in terms:
+    for term in sorted(terms):
         kind = _interest_kind(term)
         value = _interest_label(term)
         boundary = (
@@ -2994,11 +3275,16 @@ def article_interest_matches(
     return matches
 
 
+def _article_rank_key(item: dict[str, Any]) -> tuple[float, int, str]:
+    """Break ranking ties by a story's stable identity, never its arrival order."""
+    return (-float(item["score"]), -int(item["published_ts"]), str(item["id"]))
+
+
 def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Collapse near-identical cross-publisher events into one inspectable card."""
     clusters: list[dict[str, Any]] = []
     postings: dict[str, set[int]] = {}
-    ordered = sorted(scored, key=lambda item: int(item["published_ts"]), reverse=True)
+    ordered = sorted(scored, key=lambda item: (-int(item["published_ts"]), str(item["id"])))
     for item in ordered:
         features = item["_event_features"]
         candidate_counts: dict[int, int] = {}
@@ -3007,7 +3293,9 @@ def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                 candidate_counts[cluster_index] = candidate_counts.get(cluster_index, 0) + 1
         best_index = -1
         best_similarity = 0.0
-        for cluster_index, shared_count in candidate_counts.items():
+        # Equal similarities prefer the earliest canonical anchor. Posting-set
+        # traversal must not decide which event receives an ambiguous story.
+        for cluster_index, shared_count in sorted(candidate_counts.items()):
             if shared_count < 2:
                 continue
             cluster = clusters[cluster_index]
@@ -3038,11 +3326,7 @@ def cluster_articles(scored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     collapsed: list[dict[str, Any]] = []
     duplicate_count = 0
     for cluster in clusters:
-        members = sorted(
-            cluster["members"],
-            key=lambda member: (float(member["score"]), int(member["published_ts"])),
-            reverse=True,
-        )
+        members = sorted(cluster["members"], key=_article_rank_key)
         representative = members[0]
         sources = list(dict.fromkeys(str(member["source"]) for member in members))
         coverage_count = len(sources)
@@ -3096,13 +3380,17 @@ def _selection_utility(
     utility -= source_seen * 1.45
     if source_seen >= source_cap:
         utility -= 50.0
-    for topic in list(item["_topics"])[:3]:
-        utility -= topic_counts.get(topic, 0) * 0.18
-    for region in list(item["_regions"])[:2]:
-        if region != "global":
-            utility -= region_counts.get(region, 0) * 0.10
-    for source_type in list(item["_types"])[:3]:
-        utility -= type_counts.get(source_type, 0) * 0.035
+    # Bound each metadata penalty as before, considering the most repeated
+    # dimensions instead of arbitrary entries from an unordered set.
+    topic_repeats = sorted((topic_counts.get(topic, 0) for topic in item["_topics"]), reverse=True)
+    region_repeats = sorted(
+        (region_counts.get(region, 0) for region in item["_regions"] if region != "global"),
+        reverse=True,
+    )
+    type_repeats = sorted((type_counts.get(kind, 0) for kind in item["_types"]), reverse=True)
+    utility -= sum(topic_repeats[:3]) * 0.18
+    utility -= sum(region_repeats[:2]) * 0.10
+    utility -= sum(type_repeats[:3]) * 0.035
     utility -= closest_similarity * 2.4
     return utility
 
@@ -3111,10 +3399,10 @@ def diverse_selection(
     candidates: list[dict[str, Any]],
     limit: int,
 ) -> list[dict[str, Any]]:
-    # The candidates arrive base-score sorted. Re-ranking a generous top slice
-    # preserves choice while keeping panel opens comfortably interactive.
+    # Canonical ordering makes the bounded pool independent of arrival order.
+    # Re-ranking a generous top slice keeps panel opens interactive.
     pool_size = min(len(candidates), max(DIVERSITY_POOL_MIN, limit * DIVERSITY_POOL_FACTOR))
-    pool = candidates[:pool_size]
+    pool = sorted(candidates, key=_article_rank_key)[:pool_size]
     selected: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
     topic_counts: dict[str, int] = {}
@@ -3125,12 +3413,15 @@ def diverse_selection(
     }
     source_cap = max(1, math.ceil(limit * 0.10))
     while pool and len(selected) < limit:
-        best_index = max(
+        best_index = min(
             range(len(pool)),
-            key=lambda index: _selection_utility(
-                pool[index], source_counts, topic_counts,
-                region_counts, type_counts, source_cap,
-                closest_similarity.get(str(pool[index]["id"]), 0.0),
+            key=lambda index: (
+                -_selection_utility(
+                    pool[index], source_counts, topic_counts,
+                    region_counts, type_counts, source_cap,
+                    closest_similarity.get(str(pool[index]["id"]), 0.0),
+                ),
+                *_article_rank_key(pool[index]),
             ),
         )
         item = pool.pop(best_index)
@@ -3177,10 +3468,7 @@ def select_ranked_variant(
             source_item.get(discovery_key, source_item.get("_discovery", False))
         )
         candidates.append(item)
-    candidates.sort(
-        key=lambda item: (float(item["score"]), int(item["published_ts"])),
-        reverse=True,
-    )
+    candidates.sort(key=_article_rank_key)
     selected = diverse_selection(candidates, limit)
     discovery_target = 0
     if not has_query and personalized and discovery_percent > 0 and selected:
@@ -3237,11 +3525,11 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
             conn.execute(
                 "WITH source_recent AS ("
                 "SELECT articles.*, ROW_NUMBER() OVER ("
-                "PARTITION BY source ORDER BY published_ts DESC"
+                "PARTITION BY source ORDER BY published_ts DESC, id ASC"
                 ") AS source_rank FROM articles "
                 f"WHERE published_ts >= ? AND source IN ({placeholders})"
                 ") SELECT * FROM source_recent WHERE source_rank <= ? "
-                "ORDER BY published_ts DESC LIMIT ?",
+                "ORDER BY published_ts DESC, id ASC LIMIT ?",
                 (
                     now - 45 * 86400,
                     *active_names,
@@ -3521,7 +3809,7 @@ def ranked_articles(limit: int, interests: str = "", query: str = "") -> tuple[l
             item["reason"] = "outside your usual mix"
             item["_components"].append(("discovery lane", 0.0))
         ranked_components = sorted(
-            item["_components"], key=lambda component: abs(component[1]), reverse=True
+            item["_components"], key=lambda component: (-abs(component[1]), component[0], -component[1])
         )[:6]
         item["why"] = [
             {"label": label, "score": round(value, 2)}
@@ -3817,33 +4105,44 @@ def record_open(article_id_value: str, signal: str = "open") -> dict[str, Any]:
         raise ValueError("unsupported reading signal")
     now = int(time.time())
     conn = db()
-    exists = conn.execute(
-        "SELECT 1 FROM articles WHERE id = ?", (article_id_value,)
-    ).fetchone()
-    if not exists:
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM articles WHERE id = ?", (article_id_value,)).fetchone():
+                raise ValueError("article not found")
+            setup = load_setup_profile(conn)
+            should_learn = bool(setup.get("privacy", {}).get("learn_from_opens", True))
+            result: dict[str, Any] = {"applied": False, "terms": []}
+            if signal == "open":
+                conn.execute(
+                    "UPDATE articles SET opened_count = opened_count + 1, last_opened_ts = ? "
+                    "WHERE id = ?",
+                    (now, article_id_value),
+                )
+            if should_learn:
+                result = apply_article_signal(conn, article_id_value, signal, now)
+            row = conn.execute(
+                "SELECT opened_count, last_opened_ts FROM articles WHERE id = ?",
+                (article_id_value,),
+            ).fetchone()
+            history_count = conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE opened_count > 0"
+            ).fetchone()[0]
+        return {
+            "ok": True,
+            "article_id": article_id_value,
+            "signal": signal,
+            "signal_label": SIGNAL_LABELS[signal],
+            "opens": int(row["opened_count"]),
+            "last_opened_ts": row["last_opened_ts"],
+            "counts": {"history": int(history_count)},
+            "learned": result["terms"],
+            "applied": bool(result["applied"]),
+            "learning_enabled": should_learn,
+            "learning_suppressed": bool(result.get("suppressed", False)),
+        }
+    finally:
         conn.close()
-        raise ValueError("article not found")
-    setup = load_setup_profile(conn)
-    should_learn = bool(setup.get("privacy", {}).get("learn_from_opens", True))
-    result: dict[str, Any] = {"applied": False, "terms": []}
-    with conn:
-        if signal == "open":
-            conn.execute(
-                "UPDATE articles SET opened_count = opened_count + 1, last_opened_ts = ? "
-                "WHERE id = ?",
-                (now, article_id_value),
-            )
-        if should_learn:
-            result = apply_article_signal(conn, article_id_value, signal, now)
-    conn.close()
-    return {
-        "ok": True,
-        "signal": signal,
-        "signal_label": SIGNAL_LABELS[signal],
-        "learned": result["terms"],
-        "applied": bool(result["applied"]),
-        "learning_enabled": should_learn,
-    }
 
 
 def list_history(limit: int = 500) -> dict[str, Any]:
@@ -5677,6 +5976,7 @@ def build_parser() -> argparse.ArgumentParser:
     sources_parser.add_argument("--install-user-copy", action="store_true")
     sources_parser.add_argument("--all", action="store_true", help="Include inactive catalog sources")
     sources_action = sources_parser.add_mutually_exclusive_group()
+    sources_action.add_argument("--health", action="store_true", help="Show saved feed health without fetching")
     sources_action.add_argument("--export-opml", default=None, metavar="PATH")
     sources_action.add_argument("--import-opml", default=None, metavar="PATH")
     return parser
@@ -5792,6 +6092,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             return emit(doctor())
         if args.command == "sources":
+            if args.health:
+                return emit(source_health(active_only=not args.all))
             if args.export_opml is not None:
                 return emit(export_sources_opml(args.export_opml, active_only=not args.all))
             if args.import_opml is not None:
