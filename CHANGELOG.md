@@ -3,7 +3,24 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
-## Unreleased
+## [0.22.0] - 2026-09-05
+
+### Added
+
+- Gemini CLI and Grok Build support for Follow Omarchy, with agent-provided
+  model catalogs, manual model entry, streamed summaries, and temporary session
+  storage. Grok reasoning choices come from its catalog; Gemini manages its own.
+- Test feed in custom-source setup: validate a URL and preview a headline
+  without saving a subscription or changing the article cache.
+- Claude Code support for Follow Omarchy, with a discovered model catalog,
+  advertised reasoning options, manual model entry, and streamed summaries.
+  Existing sign-in and model settings are used; tools and customizations are
+  disabled for article summaries.
+
+### Upgrade
+
+- Update through App & Updates. Existing preferences, saved stories and reading
+  history are preserved. Sign in through your chosen AI agent before use.
 
 ## [0.21.1] - 2026-09-05
 

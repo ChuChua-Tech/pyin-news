@@ -60,7 +60,7 @@ Column {
   }
   function applyManual() {
     var model = manualField.text.trim()
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,199}$/.test(model)) {
+    if (model.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._:/@+\-]*(?:\[[A-Za-z0-9._\-]{1,24}\])?$/.test(model)) {
       picker.validationMessage = "Enter a model identifier without spaces (up to 200 characters)."
       return
     }

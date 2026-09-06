@@ -12,6 +12,7 @@ FocusScope {
   property int profileRevision: 0
   property bool saving: false
   property bool existingComplete: false
+  property string backendPath: ""
   property color foreground: Color.foreground
   property color background: Color.background
   property color accent: Color.accent
@@ -472,6 +473,9 @@ FocusScope {
   Text {
     anchors.right: parent.right
     anchors.top: parent.top
+    width: Math.max(0, parent.width - progressLabel.width - Style.spacing.md)
+    elide: Text.ElideRight
+    horizontalAlignment: Text.AlignRight
     textFormat: Text.PlainText
     text: "Ctrl+← / Ctrl+→ pages  ·  j/k scroll  ·  Tab controls  ·  Esc exit"
     color: wizard.dim
@@ -1060,6 +1064,16 @@ FocusScope {
           onAccepted: wizard.addCustomSource()
         }
 
+        FeedProbe {
+          width: parent.width
+          backendPath: wizard.backendPath
+          feedUrl: wizard.customSourceUrl
+          foreground: wizard.foreground
+          accent: wizard.accent
+          dim: wizard.dim
+          fontFamily: wizard.fontFamily
+        }
+
         Button {
           text: "Add source to this setup"
           iconText: "󰐕"
@@ -1209,7 +1223,7 @@ FocusScope {
 
           Repeater {
             model: [
-              { value: "system", label: "Follow Omarchy", description: "Follow Omarchy's selected AI; the current safe adapter supports Codex" },
+              { value: "system", label: "Follow Omarchy", description: "Use Omarchy's selected Codex, Claude Code, Gemini or Grok, with its existing sign-in and model settings" },
               { value: "local", label: "Local server", description: "Use an OpenAI-compatible endpoint on this machine only" },
               { value: "off", label: "No AI", description: "Disable per-story AI TL;DR actions" }
             ]

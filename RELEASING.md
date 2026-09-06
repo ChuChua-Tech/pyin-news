@@ -15,8 +15,8 @@ Maintainer notes:
 > PYIN uses theme-native QML plus a standard-library-only Python helper. It has
 > no installer, privileged operations, package-manager step, background system
 > service, analytics, or account. It contacts configured RSS/Atom and article
-> hosts. AI is optional and user-invoked: System AI uses the user's configured
-> Codex provider, Local server is restricted to loopback, and No AI remains a
+> hosts. AI is optional and user-invoked: System AI uses the selected Codex,
+> Claude Code, Gemini CLI or Grok Build's model settings, Local server is restricted to loopback, and No AI remains a
 > complete reader. `notify-send` is optional for alerts. User state remains in
 > XDG config/state directories and is documented in the README.
 

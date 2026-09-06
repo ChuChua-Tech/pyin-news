@@ -32,7 +32,7 @@ panel is opened; it can be reopened later with `c` or from Profile.
 - Network access to the RSS/Atom and article hosts the reader checks
 - Subject alerts use Omarchy's native notification sender; `notify-send` is a
   non-clickable compatibility fallback when that helper is unavailable
-- Optional: Codex for System AI, or a loopback OpenAI-compatible server for
+- Optional: Codex, Claude Code, Gemini CLI or Grok Build for System AI, or a loopback OpenAI-compatible server for
   Local server mode; the news reader remains fully usable with No AI
 
 PYIN has no installer script, package-manager step, background system service,
@@ -75,7 +75,7 @@ profile locally. Normal refreshes contact only configured RSS/Atom endpoints;
 opening or summarizing a story can also fetch that publisher's article page.
 
 AI never ranks the feed and runs only after an explicit TL;DR or question. In
-System AI mode, the supplied article text is sent to the configured Codex
+System AI mode, the supplied article text is sent to the selected agent's configured
 model. In Local server mode, it is sent only to the configured loopback
 endpoint. With No AI selected, article text is not sent to any model. The
 feedback form opens a local pre-addressed email draft and sends nothing until
@@ -204,10 +204,29 @@ page indefinitely.
 ## AI providers
 
 `Follow Omarchy` is the default wizard choice (System AI mode). PYIN reads Omarchy's selected agent from
-`~/.config/omarchy/defaults/agent`. The current adapter supports Codex through
-Codex's local app-server event stream in an ephemeral, read-only sandbox. Final-answer
-deltas appear as they arrive; commentary events are discarded. It never uses the normal
-`omarchy agent` auto-approval launcher.
+`~/.config/omarchy/defaults/agent`. Codex uses its local app-server event stream
+in an ephemeral, read-only sandbox. Claude Code uses its native streaming CLI,
+with existing authentication and model settings, no session persistence, and
+tools disabled. Claude's safe mode disables customizations such as hooks,
+plugins and project instructions for these source-bound requests. Use a current
+Claude Code release; this adapter was verified with 2.1.261. See the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+Gemini CLI uses ACP; Grok Build uses ACP for discovery and its constrained
+headless interface for summaries. Tools are disabled and session storage is
+temporary. Gemini reuses its
+existing keychain or file-backed sign-in and settings; Grok retains its model
+and authentication configuration and references its existing login. Agent
+customizations are excluded from these article requests. No extra Python
+packages or AI SDKs are required. The adapters were checked against Gemini CLI
+0.58.0 and Grok Build 1.0.13; use current releases. See the
+[Gemini configuration reference](https://geminicli.com/docs/reference/configuration/)
+and [Grok integration reference](https://docs.x.ai/build/cli/headless-scripting).
+Grok receives the article as an embedded text resource, avoiding an extra
+session-title request; auxiliary turn and title summaries are disabled.
+Sign in through your chosen agent first. A missing login is reported in the
+picker or summary; PYIN does not open an interactive sign-in flow.
+Answer text appears as it arrives; reasoning and subagent text are excluded.
+PYIN never uses Omarchy's generic auto-approval launcher.
 
 The Model dropdown in Setup and Profile starts with **Agent default**, which
 leaves model and reasoning overrides unset. Choose a model from the agent's
@@ -216,24 +235,30 @@ An optional reasoning dropdown shows settings advertised for the chosen model;
 **Agent default** leaves reasoning to the agent's configuration. These choices
 apply only to PYIN and do not change the agent's settings.
 
-Codex model discovery runs when the picker is opened or explicitly refreshed.
-It reads the app-server model catalog without creating a conversation or making
-an inference request. Results are cached locally for fifteen minutes. A failed
+Model discovery runs when the picker is opened or explicitly refreshed.
+It reads Codex's app-server catalog, Claude Code's initialization catalog,
+or Gemini/Grok's ACP model catalog
+without submitting an AI prompt. Results are cached locally for fifteen minutes. A failed
 refresh can show the previous catalog with an error; Agent default and manual
 entry remain available. Model access is checked when requested, and PYIN does
-not silently substitute another model. Other agents require their own discovery
+not request a fallback model. Changing Omarchy agents retains a saved model
+override: choose **Agent default** or a model supported by the newly selected
+agent if the old choice is unavailable. Other agents require their own discovery
 and summary adapters; a provider API catalog alone does not supply that adapter.
+Grok's reasoning menu uses the values advertised for each model. Gemini manages
+reasoning itself; clear an old reasoning override when switching to Gemini.
 
 Old Fast, Balanced, and Thorough preferences migrate to their exact model and
 reasoning choices. The three preset buttons are replaced by the model picker.
-Completed summaries show the effective model and provider returned by Codex.
+Completed summaries show the effective model returned by the agent, plus
+provider information where the agent supplies it.
 Requests using the new model settings generate fresh summaries because provider
 configuration can change outside PYIN. Legacy CLI preset flags remain accepted
-for compatibility, with their original caching behavior.
+for compatibility; their original caching behavior applies only to Codex.
 
 Setup and Profile also report the selected agent's availability. If Omarchy has
 no selected agent, PYIN does not infer Codex from its installation. Unsupported
-agents and a missing Codex command are explained before a summary request.
+agents and missing commands are explained before a summary request.
 Availability checks do not launch an agent. Opening the model picker starts
 a catalog lookup; summary authentication is checked when a summary is requested.
 Other agent adapters and hosted endpoints are not currently supported. Local
@@ -531,8 +556,11 @@ one application:
 ```
 
 The setup wizard's fourth page is the simpler path for adding one-off feeds: give
-the feed a name and its HTTP/HTTPS RSS or Atom endpoint. Changes remain staged
-until the final setup page; custom feeds are checked during the next refresh and
+the feed a name and its HTTP/HTTPS RSS or Atom endpoint. **Test feed** checks
+that URL and previews its latest available headline without saving anything.
+Empty valid feeds are accepted; HTML pages and unreadable responses show errors.
+You can also run `bin/chuchua-news sources --test https://example.org/feed.xml`.
+Changes remain staged until the final setup page; custom feeds are fetched during the next refresh and
 can be removed from the same page later.
 
 To customize it without editing the plugin:
