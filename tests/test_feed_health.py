@@ -135,6 +135,57 @@ class FeedHealthTests(unittest.TestCase):
             with self.subTest(empty=body[:90]):
                 self.assertEqual(self.backend.parse_feed(SOURCE, body, NOW), [])
 
+    def test_feed_probe_previews_reporting_without_writing_state(self):
+        before = {str(path): path.read_bytes() for path in self.base.rglob('*') if path.is_file()}
+        with mock.patch.object(self.backend, "http_get_conditional", return_value=(RSS, {})) as request, \
+             mock.patch.object(self.backend, "db", side_effect=AssertionError("Probe must not open the database")):
+            result = self.backend.test_feed_url(SOURCE["url"])
+        request.assert_called_once_with(SOURCE["url"], self.backend.MAX_FEED_BYTES)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["title"], "Fixture News")
+        self.assertEqual(result["latest"]["title"], "A useful discovery")
+        self.assertEqual(result["sampled_articles"], 1)
+        after = {str(path): path.read_bytes() for path in self.base.rglob('*') if path.is_file()}
+        self.assertEqual(before, after)
+
+    def test_feed_probe_accepts_empty_feed_and_rejects_html_or_bodyless_response(self):
+        with mock.patch.object(self.backend, "http_get_conditional", return_value=(EMPTY_RSS, {})):
+            result = self.backend.test_feed_url(SOURCE["url"])
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["latest"])
+        self.assertEqual(result["sampled_articles"], 0)
+        for body in [HTML, None]:
+            with self.subTest(body=body), mock.patch.object(self.backend, "http_get_conditional", return_value=(body, {})):
+                with self.assertRaises(ValueError):
+                    self.backend.test_feed_url(SOURCE["url"])
+
+    def test_feed_probe_uses_newest_article_not_feed_order(self):
+        body = b'<rss><channel><title>Newsroom</title>'
+        for title, date in [('Old', '2026-09-01T12:00:00Z'), ('New', '2026-09-05T12:00:00Z')]:
+            body += f'<item><title>{title}</title><link>https://example.test/{title}</link><pubDate>{date}</pubDate></item>'.encode()
+        body += b'</channel></rss>'
+        with mock.patch.object(self.backend, "http_get_conditional", return_value=(body, {})):
+            result = self.backend.test_feed_url(SOURCE["url"])
+        self.assertEqual(result["latest"]["title"], "New")
+
+    def test_feed_probe_invalid_url_does_not_fetch_or_create_directories(self):
+        self.backend.CONFIG_DIR = self.base / 'never-created-config'
+        self.backend.STATE_DIR = self.base / 'never-created-state'
+        with mock.patch.object(self.backend, "http_get_conditional") as request:
+            for url in ['', 'file:///etc/passwd', 'https://exa mple.test/rss', 'https://example.test/' + 'x' * 2000]:
+                with self.subTest(url=url), self.assertRaises(ValueError):
+                    self.backend.test_feed_url(url)
+            request.assert_not_called()
+        self.assertFalse(self.backend.CONFIG_DIR.exists())
+        self.assertFalse(self.backend.STATE_DIR.exists())
+
+    def test_feed_probe_cli_returns_structured_validation_error(self):
+        result = subprocess.run([sys.executable, '-B', str(ROOT / 'bin/chuchua-news'),
+                                 'sources', '--test', 'file:///invalid'], env=self.cli_environment(),
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(json.loads(result.stdout)['ok'])
+
     def test_html_and_xml_documents_with_feed_looking_children_are_rejected(self):
         for body in (
             HTML, b'<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>',

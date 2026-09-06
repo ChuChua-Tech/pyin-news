@@ -70,8 +70,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_unsupported_and_missing_agents_are_reported_without_starting_anything(self):
         with mock.patch.object(self.backend.subprocess, "Popen") as process:
-            for agent, label in (("claude", "Claude Code"), ("gemini", "Gemini"),
-                                 ("opencode", "OpenCode"), ("something-custom", "something-custom")):
+            for agent, label in (("opencode", "OpenCode"), ("something-custom", "something-custom")):
                 self.backend.AGENT_PATH.write_text(agent)
                 status = self.backend.system_ai_status()
                 self.assertEqual(status["status"], "unsupported")
@@ -265,7 +264,7 @@ class ProviderTests(unittest.TestCase):
         self.assertTrue(failed["stale"])
         self.assertEqual(failed["models"], catalog)
         self.assertTrue(self.backend.ai_models()["cached"])
-        self.backend.AGENT_PATH.write_text("claude")
+        self.backend.AGENT_PATH.write_text("opencode")
         self.assertEqual(self.backend.ai_models()["models"], [])
 
     def test_catalog_cache_expiry_and_cold_failure(self):
@@ -323,9 +322,9 @@ class ProviderTests(unittest.TestCase):
 
     def test_unsupported_agent_fails_before_fetching_article_or_replaying_cache(self):
         self.add_cached_article("balanced")
-        self.backend.AGENT_PATH.write_text("claude")
+        self.backend.AGENT_PATH.write_text("opencode")
         with mock.patch.object(self.backend, "summary_prompt") as prompt:
-            with self.assertRaisesRegex(RuntimeError, "Claude Code"):
+            with self.assertRaisesRegex(RuntimeError, "OpenCode"):
                 self.backend.summarize("story", "system", "", "", "balanced", False)
         prompt.assert_not_called()
 
@@ -333,7 +332,7 @@ class ProviderTests(unittest.TestCase):
         before = self.backend.AGENT_PATH.read_text()
         self.assertEqual(self.backend.setup_state()["system_ai_status"]["status"], "available")
         self.assertEqual(self.backend.AGENT_PATH.read_text(), before)
-        self.backend.AGENT_PATH.write_text("gemini")
+        self.backend.AGENT_PATH.write_text("opencode")
         self.assertEqual(self.backend.curation_profile()["system_ai_status"]["status"], "unsupported")
 
 

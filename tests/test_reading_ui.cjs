@@ -1090,3 +1090,79 @@ test('pending impression writes resample the current viewport instead of replayi
   f.context.impressionTimer.trigger();
   assert.deepEqual(sentImpressions(f), [{ id: 'b', position: 2 }]);
 });
+
+function feedProbeFixture() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'FeedProbe.qml'), 'utf8');
+  const later = [];
+  const probe = { backendPath: '/fixture/backend', feedUrl: ' https://example.test/feed?a=1&b=2 ',
+    revision: 0, requestRevision: -1, responseReceived: false, result: {} };
+  const context = vm.createContext({ probe, checkProc: { running: false, command: [] },
+    checkOutput: { text: '' }, Qt: { callLater(fn) { later.push(fn); } } });
+  Object.defineProperty(probe, 'checking', { get() { return context.checkProc.running; } });
+  for (const key of [...Object.keys(probe), 'checking'])
+    Object.defineProperty(context, key, { get() { return probe[key]; }, set(value) { probe[key] = value; } });
+  Object.defineProperty(context, 'running', { get() { return context.checkProc.running; } });
+  for (const match of source.matchAll(/^  (function (\w+)\([^\n]*\) \{[\s\S]*?^  \})/gm))
+    probe[match[2]] = vm.runInContext(`(${match[1]})`, context);
+  const exited = source.match(/onExited: (function\([^\n]*\) \{[\s\S]*?^    \})/m)[1];
+  const changed = source.match(/onRunningChanged: (\{[\s\S]*?^    \})/m)[1];
+  return { probe, context,
+    stop() { context.checkProc.running = false; vm.runInContext(`(function() ${changed})`, context)(); },
+    exit(payload, code = 0, status = 0) {
+      context.checkOutput.text = JSON.stringify(payload);
+      vm.runInContext(`(${exited})`, context)(code, status);
+      this.stop();
+    },
+    flush() { while (later.length) later.shift()(); },
+  };
+}
+
+test('feed probe uses one URL argument and prevents overlapping requests', () => {
+  const f = feedProbeFixture();
+  f.probe.checkFeed();
+  assert.deepEqual(plain(f.context.checkProc.command), ['/fixture/backend', 'sources', '--test', 'https://example.test/feed?a=1&b=2']);
+  const revision = f.probe.requestRevision;
+  f.probe.checkFeed();
+  assert.equal(f.probe.requestRevision, revision);
+});
+
+test('feed probe discards stale replies even after editing back to the original URL', () => {
+  const f = feedProbeFixture();
+  f.probe.checkFeed();
+  f.probe.invalidate();
+  f.probe.invalidate();
+  f.exit({ ok: true, title: 'Outdated feed' });
+  f.flush();
+  assert.deepEqual(plain(f.probe.result), {});
+  f.probe.checkFeed();
+  f.exit({ ok: true, title: 'Current feed' });
+  f.flush();
+  assert.equal(f.probe.result.title, 'Current feed');
+});
+
+test('failed feed probe launch reports an error even when the collector retains old output', () => {
+  const f = feedProbeFixture();
+  f.probe.checkFeed();
+  f.exit({ ok: true, title: 'Previous success' });
+  f.flush();
+  f.probe.checkFeed();
+  f.stop(); // Failed launch sends no exit event and retains collector text.
+  f.flush();
+  assert.equal(f.probe.result.ok, false);
+  assert.match(f.probe.result.error, /Could not start/);
+});
+
+test('feed probe rejects crash-success payloads and malformed results, then permits retry', () => {
+  const f = feedProbeFixture();
+  for (const payload of [{ ok: true }, null, 'broken']) {
+    f.probe.checkFeed();
+    f.exit(payload, 1);
+    f.flush();
+    assert.equal(f.probe.result.ok, false);
+    assert.ok(f.probe.result.error);
+  }
+  f.probe.checkFeed();
+  f.exit({ ok: true, latest: null });
+  f.flush();
+  assert.equal(f.probe.result.ok, true);
+});

@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "tech.chuchua.news",
   "name": "PYIN News",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "author": "chuchua.tech",
   "license": "MIT",
   "homepage": "https://chuchua.tech",
-  "description": "Get the news. Keep your time. PYIN is a private, finite Omarchy reader with no bot replies, rage bait, popularity contests, or infinite scroll—just reporting you choose, transparent local curation, and optional on-demand AI.",
+  "description": "Get the news. Keep your time. PYIN is a private, finite Omarchy reader with no bot replies, rage bait, popularity contests, or infinite scroll\u2014just reporting you choose, transparent local curation, and optional on-demand AI.",
   "kinds": [
     "bar-widget",
     "panel"

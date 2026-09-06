@@ -3693,6 +3693,7 @@ Item {
 
           SetupWizard {
             id: setupWizard
+            backendPath: root.backendPath
             systemAiStatus: root.systemAiStatus
             aiModelCatalog: root.aiModelCatalog
             aiModelsLoading: aiModelsProc.running
