@@ -97,6 +97,7 @@ the user chooses to send it.
 - `/`: focus Search News; in `?` Help, focus its instant shortcut filter
 - `m`: save or remove the current story from Read Later
 - `d`: mark the current story read and hide it from the ranked feed; press again to restore it
+- `g`: open Daily Editions; choose a fixed 5/15/30-minute selection and resume saved progress
 - `v`: open the Read Later list
 - `h`: open History, with Viewed and Hidden companion lists
 - `n`: manage subject alerts
@@ -140,7 +141,7 @@ being assembled, then settles on `PYIN` as the edition appears.
 
 First launch opens an eight-page, re-runnable wizard. It configures:
 
-- a finite 5, 15, or 30 minute reading window and Calm, Compact, or Classic layout
+- a main feed size of 15, 30, or 60 stories and Calm, Compact, or Classic layout
 - optional country, region, and city boosts, stored locally
 - language, must-see, interested, and muted topics
 - a 50-entry keyword blacklist that hard-filters the feed and alert notifications
@@ -169,6 +170,29 @@ Geography is deliberately separate from subject topics: the saved location
 provides each reader's local and national lens, while country names such as
 Canada remain ordinary searchable source metadata rather than privileged
 universal categories.
+
+## Daily Editions
+
+Press **G** or the calendar icon to choose a 5, 15, or 30 minute edition.
+The local ranker selects a fixed set of stories using your existing preferences.
+Edition time is independent of Feed size in setup; the picker starts at 15 minutes
+and remembers the duration of your most recent edition.
+The time is an estimate for reading RSS synopses, with at least a minute per
+story; reading publisher originals or requesting AI can take longer. Quiet days
+can contain fewer stories.
+
+**Done & next** (or **D**) marks the story read and advances. **Skip** completes
+that slot without hiding the story from the feed or adding a negative preference
+signal. **Back** and **Pause edition** leave progress unchanged, regardless of
+the ordinary article Back setting. Resume returns to the last opened unfinished
+story; it does not restore the exact scroll offset within a synopsis.
+
+The ending stays visible until you deliberately make another edition. Refreshes
+and profile changes affect the feed and future editions; they never replace or
+append stories inside the current edition. Story labels reuse the local ranker's
+explanations. The current edition and its cached articles are retained locally,
+including through cache cleanup, until another edition replaces it. Only one
+edition is kept, and no AI call is needed to create or finish one.
 
 ## Navigation, History, and Profile
 

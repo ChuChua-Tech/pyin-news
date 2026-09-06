@@ -1166,3 +1166,103 @@ test('feed probe rejects crash-success payloads and malformed results, then perm
   f.flush();
   assert.equal(f.probe.result.ok, true);
 });
+
+function editionFixture() {
+  const f = eventFixture();
+  f.root.viewMode = 'edition';
+  f.root.editionData = { id: 'edition-one', total: 2, completed: 0, remaining: 2,
+    articles: [{ id: 'a', title: 'Story A', edition_status: 'pending' },
+      { id: 'b', title: 'Story B', edition_status: 'pending' }] };
+  f.root.interests = 'science';
+  f.root.loadFeed = () => {};
+  return f;
+}
+
+test('edition opens only after saved cursor acknowledgement; Back pauses even with mark-read enabled', () => {
+  const f = editionFixture();
+  f.root.openEditionArticle(f.root.editionData.articles[0]);
+  assert.equal(f.root.viewMode, 'edition');
+  assert.deepEqual(plain(f.processes.editionProc.command),
+    ['/test/chuchua-news', 'edition', '--id', 'edition-one', '--open', 'a']);
+  f.processes.editionProc.complete({ ok: true, edition: f.root.editionData });
+  assert.equal(f.root.viewMode, 'result');
+  assert.equal(f.root.returnViewMode, 'edition');
+  f.root.navigateBack();
+  f.flush();
+  assert.equal(f.root.viewMode, 'edition');
+  assert.equal(f.processes.readMutationProc.running, false);
+  assert.equal(f.root.editionData.completed, 0);
+});
+
+test('Done acknowledges progress before advancing and the final story returns to the finish page', () => {
+  const f = editionFixture();
+  f.root.showArticle(f.root.editionData.articles[0]);
+  f.root.activateReadAction(f.root.activeArticle);
+  assert.equal(f.root.activeArticle.id, 'a');
+  const progressed = plain(f.root.editionData);
+  progressed.articles[0].edition_status = 'done';
+  progressed.completed = 1; progressed.remaining = 1;
+  f.processes.editionProc.complete({ ok: true, edition: progressed });
+  assert.equal(f.root.activeArticle.id, 'b');
+  f.root.completeEditionStory('skip');
+  progressed.articles[1].edition_status = 'skipped';
+  progressed.completed = 2; progressed.remaining = 0;
+  f.processes.editionProc.complete({ ok: true, edition: progressed });
+  assert.equal(f.root.viewMode, 'edition');
+  assert.equal(f.root.editionData.remaining, 0);
+  assert.equal(f.processes.readMutationProc.running, false);
+});
+
+test('edition write errors keep the current story and can be retried without overlapping commands', () => {
+  const f = editionFixture();
+  f.root.showArticle(f.root.editionData.articles[0]);
+  f.root.completeEditionStory('done');
+  f.root.completeEditionStory('skip');
+  assert.equal(f.launches.filter(x => x.process === 'editionProc').length, 1);
+  f.processes.editionProc.complete({ ok: false, error: 'Storage unavailable' }, 1);
+  assert.equal(f.root.activeArticle.id, 'a');
+  assert.equal(f.root.editionData.completed, 0);
+  assert.equal(f.root.editionError, 'Storage unavailable');
+  f.root.completeEditionStory('done');
+  assert.equal(f.processes.editionProc.running, true);
+});
+
+test('late edition acknowledgements never drag the reader away from another page', () => {
+  for (const action of ['open', 'done']) {
+    const f = editionFixture();
+    if (action === 'open') f.root.openEditionArticle(f.root.editionData.articles[0]);
+    else { f.root.showArticle(f.root.editionData.articles[0]); f.root.completeEditionStory('done'); }
+    f.root.viewMode = 'profile';
+    f.processes.editionProc.complete({ ok: true, edition: f.root.editionData });
+    assert.equal(f.root.viewMode, 'profile');
+  }
+});
+
+test('opening Coverage from an edition returns to its same article and pause destination', () => {
+  const f = editionFixture();
+  f.root.showArticle(f.root.editionData.articles[0]);
+  f.root.showEventDesk();
+  assert.equal(f.root.eventOrigin.context, 'edition');
+  f.root.navigateBack();
+  assert.equal(f.root.viewMode, 'result');
+  assert.equal(f.root.returnViewMode, 'edition');
+  f.root.navigateBack();
+  assert.equal(f.root.viewMode, 'edition');
+});
+
+test('failed edition starts and crash-success replies leave progress intact and permit retry', () => {
+  const f = editionFixture();
+  f.root.showArticle(f.root.editionData.articles[0]);
+  f.root.completeEditionStory('done');
+  f.context.editionStdout.text = JSON.stringify({ ok: true, edition: { ...f.root.editionData, remaining: 0 } });
+  f.processes.editionProc.running = false; // no exit signal on a failed launch
+  f.flush();
+  assert.equal(f.root.editionRequestActive, false);
+  assert.equal(f.root.editionData.remaining, 2);
+  assert.match(f.root.editionError, /retry/i);
+  f.root.completeEditionStory('done');
+  f.processes.editionProc.complete({ ok: true, edition: { ...f.root.editionData, remaining: 0 } }, 0, 1);
+  f.flush();
+  assert.equal(f.root.editionData.remaining, 2);
+  assert.equal(f.root.activeArticle.id, 'a');
+});

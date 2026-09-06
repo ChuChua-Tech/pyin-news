@@ -63,6 +63,10 @@ FocusScope {
   readonly property var sourceTypeOptions: catalogs && catalogs.source_types ? catalogs.source_types : []
   readonly property var viewpointOptions: catalogs && catalogs.viewpoints ? catalogs.viewpoints : []
   readonly property var readingOptions: catalogs && catalogs.reading ? catalogs.reading : []
+  readonly property int feedStoryLimit: {
+    var choice = wizard.readingOptions.find(function(item) { return Number(item.value) === wizard.readingMinutes })
+    return choice ? Number(choice.story_limit) : 30
+  }
   property var systemAiStatus: ({})
   readonly property var sourceOptions: sourceSummary && sourceSummary.catalog
     ? sourceSummary.catalog : []
@@ -544,7 +548,7 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "Start with a finite reading session instead of an endless feed. The interface always follows your active Omarchy colors, borders, type, and spacing."
+          text: "Choose how many stories appear in your main feed. Choose a separate 5, 15, or 30 minute session in Daily Editions. The interface follows your active Omarchy theme."
           color: wizard.dim
           font.family: wizard.fontFamily
           font.pixelSize: Style.font.body
@@ -558,7 +562,7 @@ FocusScope {
 
           Dropdown {
             width: Math.min(Style.space(300), (parent.width - parent.spacing) / 2)
-            label: "Daily reading window"
+            label: "Feed size"
             value: String(wizard.readingMinutes)
             options: wizard.readingOptions
             foreground: wizard.foreground
@@ -1355,7 +1359,7 @@ FocusScope {
 
         Repeater {
           model: [
-            { label: "READING", value: String(wizard.readingMinutes) + " minutes · " + wizard.density + " density · " + wizard.backgroundStyle + " background · follows Omarchy" },
+            { label: "FEED", value: String(wizard.feedStoryLimit) + " stories · " + wizard.density + " density · " + wizard.backgroundStyle + " background · follows Omarchy" },
             { label: "PLACE", value: [wizard.city, wizard.region, wizard.country].filter(function(v) { return String(v).trim() !== "" }).join(", ") || "No location boost" },
             { label: "TOPICS", value: String(wizard.mustTopics.length) + " must-see · " + String(wizard.interestedTopics.length) + " interests · " + String(wizard.mutedTopics.length) + " muted · " + String(wizard.keywordList(wizard.blockedKeywordsText).length) + " blocked keywords" },
             { label: "SOURCES", value: String(wizard.activeSourceEstimate()) + " of " + String(wizard.effectiveSourceOptions.length) + " active · " + String(wizard.disabledSourceIds.length) + " individually hidden · " + String(wizard.customSources.length) + " custom" },

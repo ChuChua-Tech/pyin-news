@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 
 APP_ID = "chuchua-news"
 PLUGIN_ID = "tech.chuchua.news"
-APP_VERSION = "0.22.0"
+APP_VERSION = "0.23.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
@@ -49,7 +49,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.22.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.23.0 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -74,7 +74,7 @@ FTS_SCHEMA_VERSION = "1"
 CURATION_SCHEMA_VERSION = "6"
 # Bump when table, index, or trigger definitions change. SQLite's schema cookie
 # also invalidates the fast path after external schema changes or a downgrade.
-DB_SCHEMA_VERSION = "1"
+DB_SCHEMA_VERSION = "2"
 DISMISS_TERM_DELTA = 1.40
 DISMISS_SOURCE_DELTA = 0.35
 SHORT_MEMORY_DECAY = 0.93
@@ -267,10 +267,11 @@ VIEWPOINT_CATALOG = [
     },
 ]
 VIEWPOINT_BY_VALUE = {str(item["value"]): item for item in VIEWPOINT_CATALOG}
+# Preserve legacy preference values; the setup UI now describes their feed sizes.
 READING_CATALOG = [
-    {"value": 5, "label": "5 minutes", "story_limit": 15},
-    {"value": 15, "label": "15 minutes", "story_limit": 30},
-    {"value": 30, "label": "30 minutes", "story_limit": 60},
+    {"value": 5, "label": "15 stories", "story_limit": 15},
+    {"value": 15, "label": "30 stories", "story_limit": 30},
+    {"value": 30, "label": "60 stories", "story_limit": 60},
 ]
 
 
@@ -322,6 +323,22 @@ def db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_ts DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_last_opened
           ON articles(last_opened_ts DESC);
+        CREATE TABLE IF NOT EXISTS daily_editions (
+          id TEXT PRIMARY KEY,
+          created_ts INTEGER NOT NULL,
+          minutes INTEGER NOT NULL,
+          finished_ts INTEGER,
+          cursor_id TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS edition_items (
+          edition_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          article_id TEXT NOT NULL,
+          snapshot TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          PRIMARY KEY (edition_id, article_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_edition_items_article ON edition_items(article_id);
         CREATE TABLE IF NOT EXISTS news_events (
           id TEXT PRIMARY KEY,
           anchor_title TEXT NOT NULL,
@@ -1395,7 +1412,8 @@ def refresh(background: bool = False, interval_minutes: int = 30) -> dict[str, A
         ensure_event_index(conn)
         pruned = conn.execute(
             "DELETE FROM articles WHERE published_ts < ? "
-            "AND id NOT IN (SELECT article_id FROM bookmarks)",
+            "AND id NOT IN (SELECT article_id FROM bookmarks) "
+            "AND id NOT IN (SELECT article_id FROM edition_items)",
             (now - retention_days * 86400,),
         ).rowcount
         if due_sources:
@@ -4222,6 +4240,170 @@ def library_counts(conn: sqlite3.Connection | None = None) -> dict[str, int]:
     }
 
 
+def edition_payload(conn: sqlite3.Connection) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM daily_editions LIMIT 1").fetchone()
+    if row is None:
+        return {"ok": True, "edition": None}
+    edition = dict(row)
+    articles = []
+    now = int(time.time())
+    for item in conn.execute(
+        "SELECT edition_items.*, bookmarks.article_id IS NOT NULL AS bookmarked, "
+        "read_articles.article_id IS NOT NULL AS is_read FROM edition_items "
+        "LEFT JOIN bookmarks ON bookmarks.article_id = edition_items.article_id "
+        "LEFT JOIN read_articles ON read_articles.article_id = edition_items.article_id "
+        "WHERE edition_id = ? ORDER BY position", (row["id"],)
+    ):
+        article = json.loads(item["snapshot"])
+        article["edition_status"] = item["status"]
+        article["age"] = human_age(int(article["published_ts"]), now)
+        article["bookmarked"] = bool(item["bookmarked"])
+        article["read"] = bool(item["is_read"])
+        articles.append(article)
+    edition["articles"] = articles
+    edition["total"] = len(articles)
+    edition["completed"] = sum(item["edition_status"] != "pending" for item in articles)
+    edition["remaining"] = edition["total"] - edition["completed"]
+    edition["estimated_seconds"] = sum(item["reading_seconds"] for item in articles)
+    return {"ok": True, "edition": edition}
+
+
+def current_edition() -> dict[str, Any]:
+    conn = db()
+    try:
+        return edition_payload(conn)
+    finally:
+        conn.close()
+
+
+def edition_section(article: dict[str, Any]) -> str:
+    """Reuse explanations from local ranking; never invent an editorial verdict."""
+    signals = {item["label"]: float(item.get("score", 0)) for item in article.get("why", [])}
+    if signals.get("near you", 0) > 0:
+        return "Local"
+    if signals.get("must-see topic", 0) > 0 or signals.get("subject alert", 0) > 0:
+        return "Your priorities"
+    if article.get("reason") == "outside your usual mix":
+        return "Outside your bubble"
+    if signals.get("your interests", 0) > 0 or signals.get("reading profile", 0) > 0.2 or any(
+        float(item.get("weight", 0)) > 0 for item in article.get("explicit_matches", [])
+    ):
+        return "Interests"
+    return "In the news"
+
+
+def create_edition(minutes: int, interests: str = "") -> dict[str, Any]:
+    if minutes not in (5, 15, 30):
+        raise ValueError("Choose a 5, 15 or 30 minute edition")
+    existing = current_edition()
+    if existing["edition"] and existing["edition"]["remaining"]:
+        return existing  # Starting twice, even in another process, must resume.
+    # A minute per synopsis includes time to orient and choose an action. This
+    # estimates synopsis reading only; time on the publisher's site is unbounded.
+    candidates, _ = ranked_articles(minutes, interests)
+    chosen = []
+    seconds = 0
+    for article in candidates:
+        estimate = max(60, math.ceil(len((article["title"] + " " + article["synopsis"]).split()) * 60 / 200))
+        if seconds + estimate > minutes * 60:
+            continue
+        chosen.append(dict(article, reading_seconds=estimate, section=edition_section(article)))
+        seconds += estimate
+    conn = db()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = edition_payload(conn)
+            if current["edition"] and current["edition"]["remaining"]:
+                return current
+            # Keep only the current edition: bounded local storage, no growing
+            # archive. The completed edition remains until a deliberate start.
+            conn.execute("DELETE FROM edition_items")
+            conn.execute("DELETE FROM daily_editions")
+            now = int(time.time())
+            identity = hashlib.sha256(os.urandom(32)).hexdigest()[:24]
+            conn.execute(
+                "INSERT INTO daily_editions(id, created_ts, minutes) VALUES (?, ?, ?)",
+                (identity, now, minutes),
+            )
+            for position, article in enumerate(chosen):
+                # Refresh/another reader may have pruned or hidden a candidate
+                # while ranking ran. Never insert a dangling story or refill it.
+                if not conn.execute(
+                    "SELECT 1 FROM articles WHERE id = ? AND id NOT IN (SELECT article_id FROM read_articles)",
+                    (article["id"],),
+                ).fetchone():
+                    continue
+                conn.execute(
+                    "INSERT INTO edition_items(edition_id, position, article_id, snapshot) VALUES (?, ?, ?, ?)",
+                    (identity, position, article["id"],
+                     json.dumps(article, ensure_ascii=False)),
+                )
+            finish_edition_if_complete(conn)
+        return edition_payload(conn)
+    finally:
+        conn.close()
+
+
+def finish_edition_if_complete(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "UPDATE daily_editions SET finished_ts = COALESCE(finished_ts, ?) "
+        "WHERE NOT EXISTS (SELECT 1 FROM edition_items WHERE status = 'pending')",
+        (int(time.time()),),
+    )
+
+
+def sync_edition_read(conn: sqlite3.Connection, article_ids: list[str]) -> None:
+    conn.executemany(
+        "UPDATE edition_items SET status = 'done' WHERE article_id = ? AND status = 'pending'",
+        [(identity,) for identity in article_ids],
+    )
+    finish_edition_if_complete(conn)
+
+
+def update_edition(edition_id: str, article_id: str, action: str) -> dict[str, Any]:
+    if action not in ("open", "done", "skip"):
+        raise ValueError("Unknown edition action")
+    conn = db()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            item = conn.execute(
+                "SELECT * FROM edition_items WHERE edition_id = ? AND article_id = ?",
+                (edition_id, article_id),
+            ).fetchone()
+            if item is None:
+                raise ValueError("This story is not in the current edition. Reopen Daily Editions.")
+            if action == "open":
+                conn.execute("UPDATE daily_editions SET cursor_id = ? WHERE id = ?", (article_id, edition_id))
+            elif item["status"] == "pending":
+                if action == "done":
+                    article = json.loads(item["snapshot"])
+                    targets = normalize_related_ids(conn, article_id, article.get("cluster_ids", []))
+                    group_root = article_id if len(targets) > 1 else ""
+                    conn.executemany(
+                        "INSERT INTO read_articles(article_id, read_ts, group_root) VALUES (?, ?, ?) "
+                        "ON CONFLICT(article_id) DO NOTHING",
+                        [(target, int(time.time()), group_root) for target in targets],
+                    )
+                # Skip is neutral: it completes this slot, without hiding the
+                # story from Browse or adding negative personalization signals.
+                conn.execute(
+                    "UPDATE edition_items SET status = ? WHERE edition_id = ? AND article_id = ?",
+                    ("done" if action == "done" else "skipped", edition_id, article_id),
+                )
+                finish_edition_if_complete(conn)
+                conn.execute(
+                    "UPDATE daily_editions SET cursor_id = COALESCE((SELECT article_id FROM edition_items "
+                    "WHERE status = 'pending' ORDER BY position LIMIT 1), '') WHERE id = ?", (edition_id,)
+                )
+        payload = edition_payload(conn)
+        payload["counts"] = library_counts(conn)
+        return payload
+    finally:
+        conn.close()
+
+
 def bootstrap(limit: int = 0, interests: str = "") -> dict[str, Any]:
     """Build the first screen in one helper process; defer full libraries."""
     setup = setup_state()
@@ -4700,6 +4882,7 @@ def set_read_state(
                     "read_ts = excluded.read_ts, group_root = excluded.group_root",
                     (target, timestamp, group_root),
                 )
+            sync_edition_read(conn, targets)
         else:
             state = conn.execute(
                 "SELECT group_root FROM read_articles WHERE article_id = ?",
@@ -4763,6 +4946,7 @@ def dismiss_article(
                 "read_ts = excluded.read_ts, group_root = excluded.group_root",
                 (target, now, group_root),
             )
+        sync_edition_read(conn, targets)
         if not existing:
             if should_learn:
                 result = apply_article_signal(conn, article_id_value, "dismiss", now)
@@ -7137,6 +7321,15 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser = sub.add_parser("history", help="List stories deliberately opened")
     history_parser.add_argument("--limit", type=int, default=500)
 
+    edition_parser = sub.add_parser("edition", help="Read or advance the fixed daily edition")
+    edition_action = edition_parser.add_mutually_exclusive_group()
+    edition_action.add_argument("--create", type=int, choices=(5, 15, 30), metavar="MINUTES")
+    edition_action.add_argument("--open", dest="open_id", metavar="ARTICLE_ID")
+    edition_action.add_argument("--done", metavar="ARTICLE_ID")
+    edition_action.add_argument("--skip", metavar="ARTICLE_ID")
+    edition_parser.add_argument("--id", default="", help="Edition identity for safe progress writes")
+    edition_parser.add_argument("--interests", default="")
+
     read_parser = sub.add_parser("read", help="List or change stories filtered from the feed")
     read_action = read_parser.add_mutually_exclusive_group()
     read_action.add_argument("--mark", default=None, metavar="ARTICLE_ID")
@@ -7283,6 +7476,13 @@ def main(argv: list[str] | None = None) -> int:
             return emit(list_bookmarks())
         if args.command == "history":
             return emit(list_history(args.limit))
+        if args.command == "edition":
+            if args.create is not None:
+                return emit(create_edition(args.create, args.interests))
+            for action, identity in (("open", args.open_id), ("done", args.done), ("skip", args.skip)):
+                if identity is not None:
+                    return emit(update_edition(args.id, identity, action))
+            return emit(current_edition())
         if args.command == "read":
             if args.mark is not None:
                 return emit(set_read_state(

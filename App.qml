@@ -238,6 +238,14 @@ Item {
   property string tuneDirection: "more"
   property string tuneDuration: "temporary"
   property bool whySectionExpanded: false
+  property var editionData: null
+  property string editionError: ""
+  property bool editionRequestActive: false
+  property int editionRequestRevision: 0
+  property string editionAction: ""
+  property string editionActionArticleId: ""
+  property int editionNavigationRevision: 0
+  property int activeEditionNavigationRevision: 0
   property var eventData: ({})
   property var eventOrigin: null
   property bool eventArticleOpen: false
@@ -317,6 +325,7 @@ Item {
     { section: "HOME ROW", keys: "a / A", action: "Open the Article Actions HUD; choose by letter or with j/k and Enter" },
     { section: "HOME ROW", keys: "a, then u", action: "Tune the feed with a direction, exact subject or source, and duration" },
     { section: "HOME ROW", keys: "d", action: "Mark the current story read; existing cards slide up and any refill joins the bottom. Read history can restore it" },
+    { section: "HOME ROW", keys: "g", action: "Open Daily Editions: a fixed 5/15/30-minute selection with saved progress. Done advances; Back pauses." },
     { section: "HOME ROW", keys: "f", action: "Follow the selected article subject as a lasting interest" },
     { section: "HOME ROW", keys: "h", action: "Open History for viewed stories and the companion Hidden list" },
     { section: "HOME ROW", keys: "j / k  or  ↓ / ↑", action: "Move through headlines without wrapping; scroll synopsis, AI results, Profile, or Help" },
@@ -336,7 +345,8 @@ Item {
   readonly property var feedControlEntries: [
     { option: "MAIN MENU", effect: "Keeps the same destinations on every page. Feed, Profile, and Help stay available; optional Read Later, History, Alerts, and the far-right freshness chip can be shown or hidden in Profile → Customize." },
     { option: "REFRESH INTERVAL", effect: "Controls how often active RSS feeds are checked. Background checks preserve the cards already on screen; pressing R intentionally starts a newly ranked session." },
-    { option: "READING WINDOW", effect: "Chooses a finite feed of 15, 30, or 60 stories. It changes feed length, not any story's score." },
+    { option: "DAILY EDITIONS", effect: "G opens a fixed selection with estimated synopsis reading time. Done marks read; Skip completes the slot without a negative signal. Back pauses. Refreshes never refill an edition." },
+    { option: "FEED SIZE", effect: "Chooses 15, 30, or 60 stories for the main feed. Choose your reading time separately in Daily Editions. Feed size does not change story scores." },
     { option: "DENSITY", effect: "Changes how much text fits on screen. It has no ranking effect." },
     { option: "LOGO ANIMATION", effect: "Turns the occasional PYIN/NEWS split-flap animation on or off. It has no feed effect." },
     { option: "OPTIONAL FOOTER LINK", effect: "Shows one user-supplied label and HTTP/HTTPS link at the bottom right. It has no feed effect and is blank by default." },
@@ -1089,6 +1099,89 @@ Item {
     if (event === "error") root.failAiStream(payload.error || "AI request failed")
   }
 
+  function showEditions() {
+    root.cancelAiRequest()
+    root.closeActionHud()
+    root.editionNavigationRevision++
+    root.viewMode = "edition"
+    root.statusText = "Daily Editions · a fixed selection and a clear finish"
+    root.runEdition([], "load", "")
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function runEdition(args, action, articleId) {
+    if (root.editionRequestActive) return false
+    root.editionRequestActive = true
+    root.editionRequestRevision++
+    var revision = root.editionRequestRevision
+    root.editionError = ""
+    root.editionAction = action
+    root.editionActionArticleId = String(articleId || "")
+    root.activeEditionNavigationRevision = root.editionNavigationRevision
+    editionProc.command = [root.backendPath, "edition"].concat(args)
+    editionProc.running = true
+    Qt.callLater(function() { root.checkEditionLaunch(revision) })
+    return true
+  }
+
+  function checkEditionLaunch(revision) {
+    if (root.editionRequestActive && revision === root.editionRequestRevision && !editionProc.running) {
+      root.editionRequestActive = false
+      root.acceptEdition({ok: false, error: "Could not save or load your edition. Please retry."})
+    }
+  }
+
+  function startEdition(minutes) {
+    root.runEdition(["--create", String(minutes), "--interests", root.interests], "create", "")
+  }
+
+  function openEditionArticle(article) {
+    if (!article || !root.editionData) return
+    root.runEdition(["--id", String(root.editionData.id), "--open", String(article.id)], "open", article.id)
+  }
+
+  function editionReaderActive() {
+    return root.viewMode === "result" && root.returnViewMode === "edition"
+      && !root.eventArticleOpen && root.activeArticle !== null
+      && root.editionData !== null
+      && (root.editionData.articles || []).some(function(a) {
+        return String(a.id) === String(root.activeArticle.id)
+      })
+  }
+
+  function completeEditionStory(action) {
+    if (!root.editionReaderActive() || root.aiBusy) return
+    root.runEdition(["--id", String(root.editionData.id), "--" + action,
+      String(root.activeArticle.id)], action, root.activeArticle.id)
+  }
+
+  function acceptEdition(payload) {
+    if (!payload.ok) {
+      root.editionError = String(payload.error || "Could not load your edition")
+      root.statusText = root.editionError
+      return
+    }
+    if (payload.counts) root.applyLibraryCounts(payload.counts)
+    root.editionData = payload.edition || null
+    var sameVisit = root.activeEditionNavigationRevision === root.editionNavigationRevision
+    var items = root.editionData ? root.editionData.articles || [] : []
+    if (sameVisit && root.editionAction === "open" && root.viewMode === "edition") {
+      var article = items.find(function(a) { return String(a.id) === root.editionActionArticleId })
+      if (article) {
+        root.showArticle(article)
+        resultScroll.contentY = 0
+      }
+    } else if (root.editionAction === "done" || root.editionAction === "skip") {
+      root.loadFeed(true, "edition-progress")
+      if (sameVisit && root.editionReaderActive()
+          && String(root.activeArticle.id) === root.editionActionArticleId) {
+        var next = items.find(function(a) { return a.edition_status === "pending" })
+        if (next) { root.showArticle(next); resultScroll.contentY = 0 }
+        else root.backToFeed()
+      }
+    }
+  }
+
   function showArticle(article) {
     if (!article || root.aiCancelled) return
     if (root.viewMode !== "result" && root.viewMode !== "event") {
@@ -1102,7 +1195,8 @@ Item {
     root.feedbackTargetIndex = 0
     root.learnArticle(article, "open")
     if (root.viewMode !== "result" && root.viewMode !== "event")
-      root.returnViewMode = root.viewMode === "bookmarks" ? "bookmarks"
+      root.returnViewMode = root.viewMode === "edition" ? "edition"
+        : root.viewMode === "bookmarks" ? "bookmarks"
         : (root.viewMode === "history" ? "history"
           : (root.viewMode === "read" ? "read"
           : (root.viewMode === "search" ? "search" : "feed"))
@@ -1308,7 +1402,8 @@ Item {
     }
     root.learnArticle(article, "summary")
     if (root.viewMode !== "result")
-      root.returnViewMode = root.viewMode === "bookmarks" ? "bookmarks"
+      root.returnViewMode = root.viewMode === "edition" ? "edition"
+        : root.viewMode === "bookmarks" ? "bookmarks"
         : (root.viewMode === "history" ? "history"
           : (root.viewMode === "read" ? "read"
           : (root.viewMode === "search" ? "search" : "feed"))
@@ -1854,7 +1949,7 @@ Item {
     var view = value.viewpoint || ({})
     var privacy = value.privacy || ({})
     var ai = value.ai || ({})
-    return String(value.reading_minutes || 15) + " min reading window · "
+    return String(root.setupData.story_limit || 30) + " stories in feed · "
       + String(view.discovery_percent || 0) + "% discovery · "
       + String(root.profileSourceCounts.active || 0) + "/"
       + String(root.profileSourceCounts.total || 0) + " sources · "
@@ -2044,7 +2139,8 @@ Item {
 
   function closeHiddenArticle() {
     if (root.eventArticleOpen) { root.returnToEventDesk(); return }
-    root.returnViewMode = "feed"
+    var fromEdition = root.returnViewMode === "edition"
+    if (!fromEdition) root.returnViewMode = "feed"
     root.backToFeed()
   }
 
@@ -2134,6 +2230,7 @@ Item {
   }
 
   function activateReadAction(article) {
+    if (root.editionReaderActive()) { root.completeEditionStory("done"); return }
     if (!article) return
     root.toggleRead(article)
   }
@@ -2227,6 +2324,7 @@ Item {
     // headlines the reader is already scanning.
     root.loadFeed(true, showLess ? "dismiss-refill" : "read-refill")
     if (root.viewMode === "profile") root.loadProfile()
+    if (root.viewMode === "edition" || root.editionReaderActive()) root.runEdition([], "load", "")
   }
 
   function filteredHelpEntries() {
@@ -2300,7 +2398,7 @@ Item {
 
   function leaveAbout() {
     var destination = root.aboutReturnViewMode
-    var allowed = ["feed", "search", "result", "bookmarks", "history", "read", "alerts", "profile", "help"]
+    var allowed = ["edition", "feed", "search", "result", "bookmarks", "history", "read", "alerts", "profile", "help"]
     if (allowed.indexOf(destination) === -1) destination = "feed"
     root.viewMode = destination
     root.statusText = root.aboutReturnStatus || "PYIN · your news, your choices"
@@ -2337,7 +2435,8 @@ Item {
     var leavingSearch = root.viewMode === "search"
     var destination = root.viewMode === "result"
       && (root.returnViewMode === "bookmarks" || root.returnViewMode === "search"
-        || root.returnViewMode === "history" || root.returnViewMode === "read")
+        || root.returnViewMode === "history" || root.returnViewMode === "read"
+        || root.returnViewMode === "edition")
       ? root.returnViewMode : "feed"
     root.viewMode = destination
     if (destination === "history") root.loadHistory()
@@ -2397,6 +2496,7 @@ Item {
       root.leaveAbout()
       return
     }
+    if (root.editionReaderActive()) { root.backToFeed(); return }
     if (root.viewMode === "result" && root.articleBackMarksRead
         && root.activeArticle && !Boolean(root.activeArticle.read)) {
       var article = root.activeArticle
@@ -2412,6 +2512,28 @@ Item {
     if (root.viewMode === "setup") root.cancelSetup()
     else if (root.viewMode !== "feed") root.navigateBack()
     else root.requestClose()
+  }
+
+  Process {
+    id: editionProc
+    stdout: StdioCollector { id: editionStdout; waitForEnd: true }
+    stderr: StdioCollector { id: editionStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) {
+        var revision = root.editionRequestRevision
+        Qt.callLater(function() { root.checkEditionLaunch(revision) })
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.editionRequestActive = false
+      var payload = root.parsePayload(editionStdout.text,
+        String(editionStderr.text || "Could not load your edition"))
+      if (exitCode !== 0 || Boolean(exitStatus)) payload.ok = false
+      if (payload.ok && (payload.edition === undefined
+          || (payload.edition !== null && !Array.isArray(payload.edition.articles))))
+        payload = {ok: false, error: "Incomplete edition response. Please retry."}
+      root.acceptEdition(payload)
+    }
   }
 
   Process {
@@ -3231,6 +3353,7 @@ Item {
 
     FocusScope {
       id: windowContent
+      objectName: "pyinWindowContent"
       anchors.fill: parent
       anchors.margins: Style.spacing.panelPadding
       focus: true
@@ -3273,6 +3396,7 @@ Item {
           else if (root.viewMode === "history" && dy !== 0) root.moveHistoryCursor(dy)
           else if (root.viewMode === "read" && dy !== 0) root.moveReadCursor(dy)
           else if (root.viewMode === "event" && dy !== 0) eventPage.moveCursor(dy)
+          else if (root.viewMode === "edition" && dy !== 0) editionPage.moveCursor(dy)
           else if (root.viewMode === "result" && dy !== 0)
             resultScroll.contentY = Math.max(0,
               Math.min(Math.max(0, resultScroll.contentHeight - resultScroll.height),
@@ -3295,6 +3419,7 @@ Item {
           else if (root.viewMode === "history") root.showArticle(root.selectedHistoryArticle)
           else if (root.viewMode === "read") root.showArticle(root.selectedReadArticle)
           else if (root.viewMode === "event") eventPage.openSelected()
+          else if (root.viewMode === "edition") editionPage.openSelected()
         }
         onCloseRequested: {
           if (root.actionHudExpanded) root.stepBackActionHud()
@@ -3317,6 +3442,7 @@ Item {
             return
           }
           if (t === "?") root.showHelp()
+          else if ((t === "g" || t === "G") && root.setupComplete) root.showEditions()
           else if ((t === "e" || t === "E") && root.isArticleContext()) root.showEventDesk()
           else if (root.viewMode === "help" && t === "1") root.setHelpTab("keys")
           else if (root.viewMode === "help" && t === "2") root.setHelpTab("feed")
@@ -3450,7 +3576,7 @@ Item {
                 tooltipText: root.viewMode === "search"
                   ? "Clear search and return to feed"
                   : (root.viewMode === "result" && root.eventArticleOpen ? "Return to coverage"
-                  : (root.viewMode === "result" && root.articleBackMarksRead
+                  : (root.viewMode === "result" && !root.editionReaderActive() && root.articleBackMarksRead
                     && root.activeArticle && !Boolean(root.activeArticle.read)
                     ? "Mark read, hide, and return to the main feed" : "Back"))
                 foreground: root.foreground
@@ -3472,6 +3598,19 @@ Item {
                 horizontalPadding: Style.spacing.sm
                 selected: root.navigationContext() === "feed"
                 onClicked: root.showMainFeed()
+              }
+
+              Button {
+                id: editionsButton
+                iconText: "󰃭"
+                tooltipText: "Daily Editions · G"
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                focusable: true
+                horizontalPadding: Style.spacing.sm
+                selected: root.navigationContext() === "edition"
+                onClicked: root.showEditions()
               }
 
               Item {
@@ -3987,6 +4126,20 @@ Item {
             onRetryRequested: root.loadEventDesk()
           }
 
+          DailyEditionPage {
+            id: editionPage
+            anchors.fill: parent
+            visible: root.viewMode === "edition"
+            edition: root.editionData
+            busy: root.editionRequestActive
+            errorText: root.editionError
+            compact: root.compactDensity
+            separators: root.storySeparators
+            onStartRequested: function(minutes) { root.startEdition(minutes) }
+            onArticleRequested: function(article) { root.openEditionArticle(article) }
+            onRetryRequested: root.runEdition([], "load", "")
+          }
+
           Flickable {
             id: resultScroll
             anchors.fill: parent
@@ -4319,6 +4472,66 @@ Item {
                 visible: root.activeArticle !== null
                 color: root.foreground
                 opacity: 0.08
+              }
+
+              Column {
+                width: parent.width
+                visible: root.editionReaderActive()
+                spacing: Style.spacing.md
+                Text {
+                  width: parent.width
+                  text: root.editionData ? String(root.editionData.completed) + " of "
+                    + String(root.editionData.total) + " complete · Your edition stays fixed" : ""
+                  color: root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.Wrap
+                }
+                Flow {
+                  width: parent.width
+                  spacing: Style.spacing.sm
+                  Button {
+                    text: root.editionData && root.editionData.remaining > 1 ? "Done & next" : "Finish edition"
+                    tooltipText: "Mark read and continue · D"
+                    foreground: root.foreground
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    bordered: true
+                    focusable: true
+                    enabled: !root.editionRequestActive && !root.aiBusy
+                      && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
+                    onClicked: root.completeEditionStory("done")
+                  }
+                  Button {
+                    text: "Skip"
+                    tooltipText: "Move on without hiding this story or teaching Show Less"
+                    foreground: root.dim
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    focusable: true
+                    enabled: !root.editionRequestActive && !root.aiBusy
+                      && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
+                    onClicked: root.completeEditionStory("skip")
+                  }
+                  Button {
+                    text: "Pause edition"
+                    foreground: root.dim
+                    accent: root.accent
+                    fontFamily: root.fontFamily
+                    focusable: true
+                    onClicked: root.navigateBack()
+                  }
+                }
+                Text {
+                  width: parent.width
+                  visible: root.editionError !== ""
+                  text: root.editionError
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.Wrap
+                }
               }
 
               Button {
