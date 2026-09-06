@@ -3,6 +3,29 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.23.0] - 2026-09-05
+
+### Added
+
+- Daily Editions: a fixed 5, 15, or 30 minute selection with saved story progress
+  and a clear finish. Open with G or the calendar icon. Done advances and marks
+  read; Skip advances without a negative preference signal; Back pauses.
+- Edition stories remain available through feed refreshes and cache cleanup.
+  Quiet days can be shorter, and another edition starts only when requested.
+  Reading estimates cover synopses, independently of optional AI.
+
+### Changed
+
+- Renamed setup's Daily reading window to Feed size, with 15/30/60-story choices
+  and matching Profile/Help wording. Existing feed sizes are preserved.
+- Daily Editions chooses its duration separately and remembers the most recent
+  edition's duration. Changing Feed size no longer changes the edition picker.
+
+### Upgrade
+
+- Update through App & Updates. Existing preferences, saved stories, history and
+  edition progress are preserved. Press G or use the calendar icon for editions.
+
 ## [0.22.0] - 2026-09-05
 
 ### Added
