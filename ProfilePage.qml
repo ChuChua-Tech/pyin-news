@@ -22,6 +22,12 @@ Flickable {
   property string sourceMixText: ""
   property string aiProvider: "system"
   property string aiSummary: ""
+  property bool articleImages: false
+  property bool articleImagesBusy: false
+  signal articleImagesRequested(bool enabled)
+  property bool contextFraming: false
+  property bool contextFramingBusy: false
+  signal contextFramingRequested(bool enabled)
   property string systemAiModel: ""
   property string systemAiEffort: ""
   property var aiModelCatalog: ({})
@@ -459,8 +465,8 @@ Flickable {
         width: parent.width
         label: "Back marks an article read"
         description: page.articleBackMarksRead
-          ? "On · Back or Escape hides the finished story and returns to its list."
-          : "Off · Back or Escape returns without hiding the story."
+          ? "On · For ordinary articles, Back marks read and returns to the main feed. Daily Editions pauses; Coverage returns to its timeline."
+          : "Off · Back returns without hiding the story. Daily Editions pauses; Coverage returns to its timeline."
         checked: page.articleBackMarksRead
         foreground: page.foreground
         accent: page.accent
@@ -494,6 +500,30 @@ Flickable {
         font.family: page.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.Wrap
+      }
+
+      Toggle {
+        width: parent.width
+        label: "Show article images"
+        description: "Small feed-supplied thumbnails in headlines and editions. Loads images from publisher image hosts as you scroll, with a limited local cache. Missing images stay text-only."
+        checked: page.articleImages
+        enabled: !page.articleImagesBusy
+        foreground: page.foreground
+        accent: page.accent
+        fontFamily: page.fontFamily
+        onClicked: page.articleImagesRequested(!page.articleImages)
+      }
+
+      Toggle {
+        width: parent.width
+        label: "Context & framing in AI summaries"
+        description: "Flag supported framing concerns, quote-context limits and evidence gaps in the supplied article. No outside sources are checked. Applies to your next TL;DR."
+        checked: page.contextFraming
+        enabled: page.aiProvider !== "off" && !page.contextFramingBusy
+        foreground: page.foreground
+        accent: page.accent
+        fontFamily: page.fontFamily
+        onClicked: page.contextFramingRequested(!page.contextFraming)
       }
 
       AiModelPicker {

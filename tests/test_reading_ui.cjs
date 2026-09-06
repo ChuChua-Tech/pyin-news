@@ -1266,3 +1266,256 @@ test('failed edition starts and crash-success replies leave progress intact and 
   assert.equal(f.root.editionData.remaining, 2);
   assert.equal(f.root.activeArticle.id, 'a');
 });
+
+function hideFixture() {
+  const f = fixture();
+  Object.assign(f.root, { viewMode: 'feed', opened: true, feedLimit: 3, interests: '',
+    articles: [{ id: 'a', cluster_ids: ['a', 'a2'] }, { id: 'b' }, { id: 'c' }],
+    searchResults: [], bookmarks: [], historyArticles: [], readArticles: [] });
+  Object.defineProperty(f.root, 'visibleArticles', { get() {
+    return this.viewMode === 'search' ? this.searchResults : this.articles;
+  }});
+  Object.defineProperty(f.root, 'selectedArticle', { get() { return this.visibleArticles[this.selectedIndex]; }});
+  f.context.headlineList = { contentY: 80, contentHeight: 1000, height: 400, positionViewAtBeginning() {}, positionViewAtIndex() {} };
+  f.context.keyCatcher = { forceActiveFocus() {} };
+  return f;
+}
+
+for (const action of ['read', 'dismiss']) {
+  const start = f => action === 'read'
+    ? f.root.toggleRead(f.root.articles[0]) : f.root.dismissArticle(f.root.articles[0]);
+  const process = f => f.processes[action === 'read' ? 'readMutationProc' : 'dismissProc'];
+  test(`${action}: failed process start restores hidden stories and permits retry`, () => {
+    for (const animationFinished of [false, true]) {
+      const f = hideFixture();
+      start(f);
+      if (animationFinished) f.context.hideCollapseTimer.trigger();
+      process(f).failToStart();
+      f.flush();
+      assert.deepEqual(plain(f.root.optimisticHiddenIds), {});
+      assert.deepEqual(plain(f.root.articles).map(a => a.id), ['a', 'b', 'c']);
+      assert.match(f.root.statusText, /could not|failed/i);
+      start(f);
+      assert.equal(process(f).running, true);
+    }
+  });
+  test(`${action}: unsuccessful exits cannot acknowledge a successful-looking payload`, () => {
+    for (const [code, status] of [[1, 0], [0, 1]]) {
+      const f = hideFixture(); start(f);
+      process(f).complete({ ok: true, article_id: 'a', article_ids: ['a', 'a2'], read: true }, code, status);
+      f.flush();
+      assert.deepEqual(plain(f.root.optimisticHiddenIds), {});
+      assert.deepEqual(plain(f.root.articles).map(a => a.id), ['a', 'b', 'c']);
+    }
+  });
+  test(`${action}: an acknowledged hide finishes before another action can replace its animation`, () => {
+    const f = hideFixture(); start(f);
+    process(f).complete({ ok: true, article_id: 'a', article_ids: ['a', 'a2'], read: true, counts: {} });
+    const before = f.launches.length;
+    f.root.toggleRead(f.root.articles[1]);
+    assert.equal(f.launches.length, before);
+    f.context.hideCollapseTimer.trigger(); f.flush();
+    assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c']);
+    assert.equal(f.processes.loadProc.running, true);
+    assert.equal(f.root.toggleRead(f.root.articles[0]), true);
+  });
+}
+
+test('stale pre-hide feed responses cannot resurrect a removed event; refill appends without moving selection', () => {
+  const f = hideFixture();
+  f.root.loadFeed(true, 'background-refresh');
+  f.root.toggleRead(f.root.articles[0]);
+  f.processes.readMutationProc.complete({ ok: true, article_id: 'a', article_ids: ['a', 'a2'], read: true, counts: {} });
+  f.context.hideCollapseTimer.trigger(); f.flush();
+  f.processes.loadProc.complete({ ok: true, articles: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
+  f.flush();
+  assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c']);
+  f.root.selectedIndex = 1;
+  f.processes.loadProc.complete({ ok: true, articles: [{ id: 'd' }, { id: 'c' }, { id: 'b' }] });
+  f.flush();
+  assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c', 'd']);
+  assert.equal(f.root.selectedArticle.id, 'c');
+  assert.equal(f.context.headlineList.contentY, 80);
+});
+
+
+test('invalid read replies restore the story rather than strand a pending action', () => {
+  for (const payload of [null, [], { ok: true }, { ok: false, error: 'disk is full' }]) {
+    const f = hideFixture();
+    f.root.toggleRead(f.root.articles[0]);
+    f.processes.readMutationProc.complete(payload);
+    f.flush();
+    assert.deepEqual(plain(f.root.optimisticHiddenIds), {});
+    assert.equal(f.root.toggleRead(f.root.articles[0]), true);
+  }
+});
+
+test('a completed read launch fallback cannot roll back the next save', () => {
+  const f = hideFixture();
+  f.root.viewMode = 'search';
+  f.root.searchResults = f.root.articles.slice();
+  f.root.toggleRead(f.root.articles[0]);
+  f.processes.readMutationProc.complete({ ok: true, article_id: 'a', read: true, counts: {} });
+  f.root.toggleRead(f.root.articles[0]);
+  f.flush();
+  assert.equal(f.processes.readMutationProc.running, true);
+  assert.equal(f.root.readMutationActive, true);
+  assert.equal(f.root.optimisticHiddenIds.b, true);
+});
+
+test('context/framing save is acknowledged before the toggle changes and permits retry after failure', () => {
+  const f = fixture();
+  f.root.setupData = { profile: { ai: { context_framing: false } } };
+  const original = f.root.setupData;
+  f.root.setContextFraming(true);
+  assert.deepEqual(f.launches.at(-1).command.slice(-2), ['--context-framing', 'on']);
+  assert.equal(f.root.setupData, original);
+  f.root.setContextFraming(false);
+  assert.equal(f.launches.length, 1);
+  f.processes.contextFramingProc.failToStart(); f.flush();
+  assert.equal(f.root.contextFramingSaving, false);
+  assert.equal(f.root.setupData, original);
+  f.root.setContextFraming(true);
+  f.processes.contextFramingProc.complete({ ok: true, profile: { ai: { context_framing: true } } }); f.flush();
+  assert.equal(f.root.setupData.profile.ai.context_framing, true);
+});
+
+test('failed or malformed context preference writes preserve the previous setting', () => {
+  for (const [payload, code, status] of [[null, 0, 0], [{ok: true}, 0, 0],
+    [{ok: true, profile:{ai:{context_framing:true}}}, 0, 1]]) {
+    const f = fixture(); const original = { profile:{ai:{context_framing:false}} };
+    f.root.setupData = original; f.root.setContextFraming(true);
+    f.processes.contextFramingProc.complete(payload, code, status); f.flush();
+    assert.equal(f.root.setupData, original);
+    assert.equal(f.root.contextFramingSaving, false);
+  }
+});
+
+test('context notice follows summary metadata, not a subsequently changed preference', () => {
+  const f = fixture();
+  f.root.handleAiStreamLine(JSON.stringify({event:'meta',context_framing:true}));
+  assert.equal(f.root.resultContextFraming, true);
+  f.root.setupData = {profile:{ai:{context_framing:false}}};
+  assert.equal(f.root.resultContextFraming, true);
+  f.root.resetAiPresentation();
+  assert.equal(f.root.resultContextFraming, false);
+  f.root.handleAiStreamLine(JSON.stringify({event:'meta',context_framing:false}));
+  assert.equal(f.root.resultContextFraming, false);
+});
+
+test('article image preference waits for acknowledgment and recovers from failed launch', () => {
+  const f = fixture(); const original = {profile:{appearance:{article_images:false}}};
+  f.root.setupData = original;
+  f.root.setArticleImages(true);
+  assert.equal(f.root.setupData, original);
+  f.processes.articleImagesProc.failToStart(); f.flush();
+  assert.equal(f.root.articleImagesSaving, false);
+  assert.equal(f.root.setupData, original);
+  f.root.setArticleImages(true);
+  f.processes.articleImagesProc.complete({ok:true,profile:{appearance:{article_images:true}}}); f.flush();
+  assert.equal(f.root.setupData.profile.appearance.article_images, true);
+});
+
+test('invalid or failed article image saves preserve the saved preference', () => {
+  for (const [payload,code,status] of [[null,0,0],[{ok:true},0,0],
+    [{ok:true,profile:{appearance:{article_images:'true'}}},0,0],
+    [{ok:true,profile:{appearance:{article_images:true}}},1,0]]) {
+    const f=fixture(); const original={profile:{appearance:{article_images:false}}};
+    f.root.setupData=original; f.root.setArticleImages(true);
+    f.processes.articleImagesProc.complete(payload,code,status); f.flush();
+    assert.equal(f.root.setupData, original); assert.equal(f.root.articleImagesSaving,false);
+  }
+});
+
+function imageQueueFixture() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'ArticleImageCache.qml'), 'utf8');
+  const cache = {active:false,clients:[],paths:{},fetching:'',revision:0,backendPath:'/fixture/backend'};
+  const later=[]; const downloader={running:false,command:[]};
+  const context=vm.createContext({cache,downloader,Qt:{callLater:f=>later.push(f)},
+    pending:{restart(){},stop(){}},deadline:{restart(){},stop(){}}});
+  for (const key of Object.keys(cache)) Object.defineProperty(context,key,{get:()=>cache[key],set:value=>{cache[key]=value;},configurable:true});
+  for (const match of source.matchAll(/^  (function (\w+)\([^\n]*\) \{[\s\S]*?^  \})/gm))
+    context[match[2]]=cache[match[2]]=vm.runInContext(`(${match[1]})`,context);
+  // schedule is deliberately a one-line QML method.
+  cache.schedule=()=>{};
+  return {cache,downloader,flush(){while(later.length)later.shift()();}};
+}
+
+test('thumbnail queue fetches only visible clients, serializes requests and remembers failures',()=>{
+  const f=imageQueueFixture();
+  f.cache.clients=[{articleId:'hidden',wantsImage:false},{articleId:'a',wantsImage:true},{articleId:'b',wantsImage:true}];
+  f.cache.pump(); assert.deepEqual(f.downloader.command,[]);
+  f.cache.active=true;f.cache.pump();
+  assert.deepEqual(plain(f.downloader.command),['/fixture/backend','article-images','--ids-json','["a"]']);
+  f.cache.pump();assert.equal(f.cache.fetching,'a');
+  f.downloader.running=false;f.cache.finish('file:///cache/a.img');
+  f.cache.pump();assert.equal(f.cache.fetching,'b');
+  f.downloader.running=false;f.cache.finish('');f.cache.pump();
+  assert.equal(f.cache.fetching,'');assert.equal(f.cache.paths.b,'');
+  assert.equal(f.cache.paths.hidden,undefined);
+});
+
+test('thumbnail queue rechecks visibility and survives a failed process start',()=>{
+  const f=imageQueueFixture();f.cache.active=true;
+  f.cache.clients=[{articleId:'a',wantsImage:true},{articleId:'b',wantsImage:true}];
+  f.cache.pump();f.downloader.running=false;f.flush();
+  assert.equal(f.cache.fetching,'');assert.equal(f.cache.paths.a,'');
+  f.cache.clients[1].wantsImage=false;f.cache.pump();assert.equal(f.cache.fetching,'');
+  f.cache.clients[1].wantsImage=true;f.cache.pump();assert.equal(f.cache.fetching,'b');
+  f.flush();assert.equal(f.cache.fetching,'b');
+});
+
+function foldingFixture() {
+  const f=fixture();f.root.viewMode='result';
+  f.context.readingImage={reserved:true};
+  f.context.readingImageFrame={y:140,height:240};
+  f.context.resultScroll={contentY:0,contentHeight:1800,height:650,cancelFlick(){}};
+  f.context.resultColumn={spacing:16,forceLayout(){}};
+  return f;
+}
+
+test('first Down folds the visible photo without skipping opening text; next Down scrolls',()=>{
+  const f=foldingFixture();f.root.scrollReading(70);
+  assert.equal(f.root.readingImageFolded,true);assert.equal(f.context.resultScroll.contentY,0);
+  f.root.scrollReading(70);assert.equal(f.context.resultScroll.contentY,70);
+  f.root.scrollReading(-70);assert.equal(f.root.readingImageFolded,false);
+  assert.equal(f.context.resultScroll.contentY,0);
+});
+
+test('reader scroll stays ordinary without an image and ignores horizontal or invalid steps',()=>{
+  const f=foldingFixture();f.context.readingImage.reserved=false;
+  f.root.scrollReading(70);assert.equal(f.context.resultScroll.contentY,70);
+  assert.equal(f.root.readingImageFolded,false);
+  f.root.scrollReading(0);f.root.scrollReading(NaN);assert.equal(f.context.resultScroll.contentY,70);
+  f.root.scrollReading(-1000);assert.equal(f.context.resultScroll.contentY,0);
+});
+
+test('folding above the viewport keeps the current prose anchored including the removed gap',()=>{
+  const f=foldingFixture();f.context.resultScroll.contentY=700;
+  f.root.keepReadingImageAnchor(240,0,140);
+  assert.equal(f.context.resultScroll.contentY,444);
+  f.root.keepReadingImageAnchor(0,240,140);
+  assert.equal(f.context.resultScroll.contentY,700);
+  assert.equal(f.root.adjustingReadingImage,false);
+  f.context.resultScroll.contentY=0;f.root.keepReadingImageAnchor(240,0,140);
+  assert.equal(f.context.resultScroll.contentY,0);
+});
+
+test('an offscreen photo folds without consuming the requested reading step',()=>{
+  const f=foldingFixture();f.context.resultScroll.contentY=700;
+  f.root.scrollReading(70);assert.equal(f.root.readingImageFolded,true);
+  assert.equal(f.context.resultScroll.contentY,770);
+});
+
+test('reader wheel handler accepts pixel scrolling and wheel notches in the same direction',()=>{
+  const match=qml.match(/onWheel: (function\(event\) \{[\s\S]*?^              \})/m);
+  assert.ok(match);
+  const steps=[];
+  const handler=vm.runInNewContext(`(${match[1]})`,{root:{scrollReading:delta=>steps.push(delta)},Style:{space:v=>v}});
+  const pixel={pixelDelta:{y:-4},angleDelta:{y:0},accepted:false};handler(pixel);
+  const down={pixelDelta:{y:0},angleDelta:{y:-120},accepted:false};handler(down);
+  const up={pixelDelta:{y:3},angleDelta:{y:0},accepted:false};handler(up);
+  const horizontal={pixelDelta:{y:0},angleDelta:{y:0},accepted:true};handler(horizontal);
+  assert.deepEqual(steps,[4,70,-3]);assert.equal(pixel.accepted,true);
+  assert.equal(down.accepted,true);assert.equal(up.accepted,true);assert.equal(horizontal.accepted,false);
+});
