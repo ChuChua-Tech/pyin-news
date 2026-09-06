@@ -33,7 +33,7 @@ Maintainer notes:
 6. Run a full refresh from an empty temporary XDG state directory and review
    every source error.
 7. Verify App & Updates reports development checkouts as protected, then test a
-   stable fast-forward and a validation-failure rollback in an isolated HOME.
+   stable fast-forward and a validation-failure rollback in a disposable profile with isolated user directories.
 8. Incorporate the current `main` into `develop`, commit the release, push
    `develop`, and open a pull request into `main`.
 9. Wait for the required Python 3.13 and 3.14 checks on the final pull request

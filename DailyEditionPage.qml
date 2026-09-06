@@ -1,3 +1,4 @@
+import "Reading.js" as Reading
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -86,7 +87,7 @@ Item {
         text: page.finished ? "You can leave it here. New reporting will wait in your feed."
           : (page.edition ? "These stories stay fixed as feeds refresh. Done or Skip moves you forward; Back keeps your place."
             : "A fixed selection, saved progress, and an ending. Reading times estimate the synopses; original articles take longer.")
-        color: Color.muted
+        color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         wrapMode: Text.Wrap
@@ -133,7 +134,7 @@ Item {
       Button {
         visible: page.finished && !page.choosing
         text: "Make another edition"
-        foreground: Color.muted
+        foreground: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
         accent: Color.accent
         fontFamily: Style.font.family
         focusable: true
@@ -176,7 +177,7 @@ Item {
         Text {
           width: parent.width
           text: "Quiet days can be shorter. Nothing refills this edition."
-          color: Color.muted
+          color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.Wrap
@@ -259,7 +260,7 @@ Item {
           width: parent.width
           textFormat: Text.PlainText
           text: card.modelData.source + " · " + Math.ceil(card.modelData.reading_seconds / 60) + " min"
-          color: Color.muted
+          color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.Wrap

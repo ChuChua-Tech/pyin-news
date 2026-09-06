@@ -17,8 +17,9 @@ function fixture() {
   let readingClockStart = 0;
   const context = vm.createContext({
     root,
+    headlineList: {contentY:0, originY:0, contentHeight:0, height:400, forceLayout() {}},
     console: { log() {} },
-    Qt: { callLater(callback) { later.push(callback); } },
+    Qt: { callLater(callback) { later.push(callback); }, binding(callback) { return callback(); } },
     openedReload: { restarts: 0, restart() { this.restarts++; } },
     Window: { Hidden: 0, Windowed: 2, Minimized: 3 },
     window: { visible: true },
@@ -1276,7 +1277,7 @@ function hideFixture() {
     return this.viewMode === 'search' ? this.searchResults : this.articles;
   }});
   Object.defineProperty(f.root, 'selectedArticle', { get() { return this.visibleArticles[this.selectedIndex]; }});
-  f.context.headlineList = { contentY: 80, contentHeight: 1000, height: 400, positionViewAtBeginning() {}, positionViewAtIndex() {} };
+  f.context.headlineList = { originY: 0, forceLayout() {}, contentY: 80, contentHeight: 1000, height: 400, positionViewAtBeginning() {}, positionViewAtIndex() {} };
   f.context.keyCatcher = { forceActiveFocus() {} };
   return f;
 }
@@ -1518,4 +1519,224 @@ test('reader wheel handler accepts pixel scrolling and wheel notches in the same
   const horizontal={pixelDelta:{y:0},angleDelta:{y:0},accepted:true};handler(horizontal);
   assert.deepEqual(steps,[4,70,-3]);assert.equal(pixel.accepted,true);
   assert.equal(down.accepted,true);assert.equal(up.accepted,true);assert.equal(horizontal.accepted,false);
+});
+
+test('AI reading text formats bold and heading lines while preserving paragraphs', () => {
+  const f = fixture();
+  assert.equal(f.root.formatAiReadingText('**What happened**\n\nA **small change**.\n## Why it matters'),
+    '<b>What happened</b><br><br>A <b>small change</b>.<br><br><b>Why it matters</b>');
+  assert.equal(f.root.formatAiReadingText('### Context & framing ###\r\nMore detail'),
+    '<b>Context &amp; framing</b><br><br>More detail');
+});
+
+test('AI reading text cannot introduce images, links or raw HTML into styled output', () => {
+  const f = fixture();
+  const result = f.root.formatAiReadingText('**<img src="https://example.invalid/track">**\n<a href="file:///tmp/a">open</a> &lt;b&gt;');
+  assert.equal(result, '<b>&lt;img src="https://example.invalid/track"&gt;</b><br><br>&lt;a href="file:///tmp/a"&gt;open&lt;/a&gt; &amp;lt;b&amp;gt;');
+  assert.deepEqual(result.match(/<[^>]+>/g), ['<b>', '</b>', '<br>', '<br>']);
+});
+
+test('incomplete bold output remains readable until the streamed closing marker arrives', () => {
+  const f = fixture();
+  assert.equal(f.root.formatAiReadingText('**Context'), '**Context');
+  assert.equal(f.root.formatAiReadingText('**Context**'), '<b>Context</b>');
+  assert.equal(f.root.formatAiReadingText('2 * 3 < 7\n\nNext paragraph'), '2 * 3 &lt; 7<br><br>Next paragraph');
+});
+
+test('reading-size save waits for acknowledgment, blocks overlapping appearance writes and permits retry', () => {
+  const f = fixture(); f.root.readingSize = 'regular';
+  const original = {profile:{appearance:{reading_size:'regular'}}}; f.root.setupData = original;
+  f.root.setReadingSize('large');
+  assert.deepEqual(f.launches.at(-1).command.slice(-2), ['--reading-size', 'large']);
+  assert.equal(f.root.setupData, original);
+  f.root.setArticleImages(true); f.root.setReadingSize('extra-large');
+  assert.equal(f.launches.length, 1);
+  f.processes.readingSizeProc.failToStart(); f.flush();
+  assert.equal(f.root.readingSizeSaving, false);
+  assert.match(f.root.readingSizeMessage, /try again/i);
+  f.root.setReadingSize('large');
+  f.processes.readingSizeProc.complete({ok:true,profile:{appearance:{reading_size:'large'}}}); f.flush();
+  assert.equal(f.root.setupData.profile.appearance.reading_size, 'large');
+  assert.equal(f.root.readingSizeSaving, false);
+});
+
+test('reading-size errors and mismatched responses preserve the saved profile', () => {
+  for (const [payload,code,status] of [[null,1,0],[{ok:true,profile:{appearance:{reading_size:'extra-large'}}},0,0],[{ok:true,profile:{appearance:{reading_size:'large'}}},0,1]]) {
+    const f=fixture(); f.root.readingSize='regular';const original={profile:{appearance:{reading_size:'regular'}}};f.root.setupData=original;
+    f.root.setReadingSize('large');f.processes.readingSizeProc.complete(payload,code,status);f.flush();
+    assert.equal(f.root.setupData,original);assert.equal(f.root.readingSizeSaving,false);
+  }
+});
+
+test('readability uses the existing palette and falls back when muted text is too faint', () => {
+  const utility=vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'..','Reading.js'),'utf8').replace('.pragma library',''),utility);
+  const rgb=hex=>({r:parseInt(hex.slice(0,2),16)/255,g:parseInt(hex.slice(2,4),16)/255,b:parseInt(hex.slice(4,6),16)/255});
+  const dark=rgb('1f1f28'),light=rgb('dcd7ba'),faint=rgb('54546d');
+  assert.equal(utility.secondaryColor(light,dark,faint),light);
+  const pale=rgb('ffffff'),ink=rgb('111111'),gray=rgb('666666');
+  assert.equal(utility.secondaryColor(ink,pale,gray),gray);
+  assert.ok(utility.contrast(gray,pale)>=4.5);
+  assert.equal(utility.sizeScale('regular'),1);assert.ok(utility.sizeScale('extra-large')>utility.sizeScale('large'));
+});
+
+test('feed scrolling under a parked pointer cannot steal keyboard selection', () => {
+  const f = fixture();
+  const r = f.root;
+  r.viewMode = 'feed';
+  r.visibleArticles = Array.from({length: 20}, (_, i) => ({id: String(i)}));
+  f.context.headlineList = {moving: false};
+  r.pointAtHeadline(0, 40, 100);
+  for (let i = 1; i <= 15; i++) {
+    r.moveCursor(1);
+    // Different rows pass under the same window position, including fractional
+    // coordinate noise from animated scrolling and hover delivery after settling.
+    r.pointAtHeadline(Math.max(0, i - 3), 40, 100.2);
+    assert.equal(r.selectedIndex, i);
+  }
+  r.pointAtHeadline(12, 45, 100);
+  assert.equal(r.selectedIndex, 12, 'deliberate mouse movement restores hover selection');
+  r.pointAtHeadline(13, 45.7, 100);
+  r.pointAtHeadline(13, 46.4, 100);
+  assert.equal(r.selectedIndex, 13, 'slow pointer movement accumulates past rounding tolerance');
+});
+
+test('feed pointer tracking observes motion without selecting during a flick', () => {
+  const f = fixture();
+  f.root.visibleArticles = Array.from({length: 10}, (_, i) => ({id: String(i)}));
+  f.root.selectedIndex = 4;
+  f.context.headlineList = {moving: true};
+  f.root.pointAtHeadline(7, 20, 80);
+  assert.equal(f.root.selectedIndex, 4);
+  f.context.headlineList.moving = false;
+  f.root.pointAtHeadline(8, 20, 80);
+  assert.equal(f.root.selectedIndex, 4, 'flick completion does not look like pointer movement');
+  f.root.pointAtHeadline(8, 30, 80);
+  assert.equal(f.root.selectedIndex, 8);
+});
+
+test('feed navigation advances once per key and stops at either end', () => {
+  const f = fixture();
+  const r = f.root;
+  r.viewMode = 'search';
+  r.visibleArticles = [{id:'a'}, {id:'b'}, {id:'c'}];
+  r.moveCursor(-1);
+  assert.equal(r.selectedIndex, 0);
+  for (let i = 0; i < 10; i++) r.moveCursor(1);
+  assert.equal(r.selectedIndex, 2);
+  r.moveCursor(-1);
+  assert.equal(r.selectedIndex, 1);
+  r.viewMode = 'result';
+  r.moveCursor(1);
+  assert.equal(r.selectedIndex, 1);
+});
+
+for (const action of ['read', 'dismiss']) {
+  test(`${action}: a late manual refresh cannot reorder survivors or prepend replacements`, () => {
+    const f = hideFixture();
+    f.root.refresh(false);
+    if (action === 'read') f.root.toggleRead(f.root.articles[0]);
+    else f.root.dismissArticle(f.root.articles[0]);
+    f.processes[action === 'read' ? 'readMutationProc' : 'dismissProc'].complete({
+      ok:true, article_id:'a', article_ids:['a', 'a2'], read:true, counts:{}
+    });
+    f.context.hideCollapseTimer.trigger(); f.flush();
+    f.root.selectedIndex = 1;
+    f.processes.loadProc.complete({ok:true, articles:[{id:'new-first',score:999}, {id:'c'}, {id:'b'}]});
+    f.flush();
+    assert.deepEqual(plain(f.root.articles).map(a=>a.id), ['b','c','new-first']);
+    // The older network refresh returns after the immediate hide refill.
+    f.processes.refreshProc.complete({ok:true, inserted:1, sources_attempted:1, sources_skipped:0});
+    assert.equal(f.root.activeFeedOrderPreservation, true);
+    f.processes.loadProc.complete({ok:true, articles:[{id:'new-second',score:1000}, {id:'new-first'}, {id:'c'}]});
+    f.flush();
+    assert.deepEqual(plain(f.root.articles).map(a=>a.id), ['b','c','new-first']);
+    assert.equal(f.root.selectedArticle.id, 'c');
+    assert.equal(f.context.headlineList.contentY, 80);
+    // Hide again: even the highest-ranked replacement belongs at the bottom.
+    if (action === 'read') f.root.toggleRead(f.root.articles[0]);
+    else f.root.dismissArticle(f.root.articles[0]);
+    f.processes[action === 'read' ? 'readMutationProc' : 'dismissProc'].complete({
+      ok:true, article_id:'b', read:true, counts:{}
+    });
+    f.context.hideCollapseTimer.trigger(); f.flush();
+    f.processes.loadProc.complete({ok:true, articles:[{id:'new-second'}, {id:'new-first'}, {id:'c'}]});
+    f.flush();
+    assert.deepEqual(plain(f.root.articles).map(a=>a.id), ['c','new-first','new-second']);
+  });
+}
+
+test('a stale rerank retried during a hide loses permission to shuffle the feed', () => {
+  const f = hideFixture();
+  f.root.loadFeed(false, 'manual-refresh');
+  f.root.dismissArticle(f.root.articles[0]);
+  f.processes.loadProc.complete({ok:true, articles:[{id:'new'}, {id:'c'}, {id:'b'}]});
+  f.flush();
+  assert.equal(f.root.activeFeedOrderPreservation, true);
+  f.processes.dismissProc.complete({ok:true, article_id:'a', read:true, counts:{}});
+  f.context.hideCollapseTimer.trigger(); f.flush();
+  f.processes.loadProc.complete({ok:true, articles:[{id:'new'}, {id:'c'}, {id:'b'}]});
+  f.flush();
+  f.processes.loadProc.complete({ok:true, articles:[{id:'new'}, {id:'c'}, {id:'b'}]});
+  f.flush();
+  assert.deepEqual(plain(f.root.articles).map(a=>a.id), ['b','c','new']);
+});
+
+test('a newly requested manual refresh can still apply a fresh ranking when no hide intervenes', () => {
+  const f = hideFixture();
+  f.root.refresh(false);
+  f.processes.refreshProc.complete({ok:true, inserted:1, sources_attempted:1, sources_skipped:0});
+  assert.equal(f.root.activeFeedOrderPreservation, false);
+  f.processes.loadProc.complete({ok:true, articles:[{id:'new'}, {id:'c'}, {id:'b'}]});
+  f.flush();
+  assert.deepEqual(plain(f.root.articles).map(a=>a.id), ['new','c','b']);
+});
+
+test('hide selects the next surviving story, with a previous-story fallback at the end', () => {
+  const f = fixture();
+  const values = ['a','b','c','d','e'].map(id=>({id}));
+  assert.equal(f.root.selectionAfterHide(values, ['c'], 2), 'd');
+  assert.equal(f.root.selectionAfterHide(values, ['c','d'], 2), 'e');
+  assert.equal(f.root.selectionAfterHide(values, ['e'], 4), 'd');
+  assert.equal(f.root.selectionAfterHide(values, ['a','b'], 2), 'c');
+  assert.equal(f.root.selectionAfterHide([{id:'a'}], ['a'], 0), '');
+});
+
+test('hide and refill restore the native cursor and viewport after model resets', () => {
+  const f = hideFixture();
+  f.root.selectedIndex = 1;
+  f.context.headlineList.forceLayout = function() {
+    // Native reproduction: rebuilding a JS model resets the view independently
+    // of root.selectedIndex, which may legitimately remain unchanged.
+    this.currentIndex = 0;
+    this.contentY = 0;
+  };
+  f.root.dismissArticle(f.root.selectedArticle);
+  f.processes.dismissProc.complete({ok:true, article_id:'b', read:true, counts:{}});
+  f.context.hideCollapseTimer.trigger(); f.flush();
+  assert.equal(f.root.selectedArticle.id, 'c');
+  assert.equal(f.context.headlineList.currentIndex, 1);
+  assert.equal(f.context.headlineList.contentY, 80);
+  f.processes.loadProc.complete({ok:true, articles:[{id:'replacement'},{id:'c'},{id:'a'}]});
+  f.flush();
+  assert.equal(f.root.selectedArticle.id, 'c');
+  assert.equal(f.context.headlineList.currentIndex, 1);
+  assert.equal(f.context.headlineList.contentY, 80);
+  assert.equal(f.root.feedLayoutChanging, false);
+  f.root.moveCursor(1);
+  assert.equal(f.root.selectedArticle.id, 'replacement');
+});
+
+test('failed hide restores the original story and pre-hide scroll position', () => {
+  const f = hideFixture();
+  f.root.selectedIndex = 1;
+  f.root.dismissArticle(f.root.selectedArticle);
+  f.context.hideCollapseTimer.trigger();
+  f.context.headlineList.contentY = 20;
+  f.processes.dismissProc.complete({ok:false, error:'write failed'}, 1);
+  f.flush();
+  assert.equal(f.root.selectedArticle.id, 'b');
+  assert.equal(f.context.headlineList.currentIndex, 1);
+  assert.equal(f.context.headlineList.contentY, 80);
+  assert.equal(f.root.feedLayoutChanging, false);
 });
