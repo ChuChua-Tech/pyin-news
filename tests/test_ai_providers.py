@@ -52,7 +52,7 @@ class ProviderTests(unittest.TestCase):
         self.backend.export_setup_profile(str(destination))
         exported = json.loads(destination.read_text())
         self.assertEqual(exported["profile"]["ai"]["system_model"], "")
-        self.assertEqual(exported["profile"]["version"], 8)
+        self.assertEqual(exported["profile"]["version"], self.backend.SETUP_PROFILE_VERSION)
         self.assertNotIn("system_ai_status", exported["profile"])
         self.backend.set_system_ai_preset("balanced")
         self.backend.import_setup_profile(str(destination))

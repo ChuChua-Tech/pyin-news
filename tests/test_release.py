@@ -42,6 +42,8 @@ class ReleasePackageTests(unittest.TestCase):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertEqual(backend_module.APP_VERSION, manifest["version"])
         self.assertIn(f"pyin-news/{manifest['version']}", backend)
+        image_helper = (ROOT / "bin" / "news_images.py").read_text(encoding="utf-8")
+        self.assertIn(f"PYIN-News/{manifest['version']}", image_helper)
         self.assertIn(f"## [{manifest['version']}]", changelog)
         for entry_point in manifest["entryPoints"].values():
             self.assertTrue((ROOT / entry_point).is_file(), entry_point)

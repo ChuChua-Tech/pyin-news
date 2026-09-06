@@ -23,6 +23,7 @@ FocusScope {
   readonly property int pageCount: 8
   property string validationMessage: ""
 
+  property bool articleImages: false
   property string density: "calm"
   property string backgroundStyle: "plain"
   property int readingMinutes: 15
@@ -46,6 +47,7 @@ FocusScope {
   property string quietEnd: "07:00"
   property int notificationMax: 6
   property string aiMode: "system"
+  property bool contextFraming: false
   property string systemAiModel: ""
   property string systemAiEffort: ""
   property var aiModelCatalog: ({})
@@ -216,6 +218,7 @@ FocusScope {
     var behavior = value.behavior || ({})
     var navigation = value.navigation || ({})
     wizard.existingComplete = Boolean(value.complete)
+    wizard.articleImages = appearance.article_images === true
     wizard.density = String(wizard.valueOr(appearance, "density", "calm"))
     wizard.backgroundStyle = String(wizard.valueOr(appearance, "background", "plain")) === "paper"
       ? "paper" : "plain"
@@ -241,6 +244,7 @@ FocusScope {
     wizard.quietEnd = String(wizard.valueOr(notifications, "quiet_end", "07:00"))
     wizard.notificationMax = Number(wizard.valueOr(notifications, "max_per_day", 6))
     wizard.aiMode = String(wizard.valueOr(ai, "mode", "system"))
+    wizard.contextFraming = ai.context_framing === true
     wizard.systemAiModel = String(ai.system_model || "")
     wizard.systemAiEffort = String(ai.system_effort || "")
     wizard.localAiUrl = String(wizard.valueOr(ai, "local_url", "http://127.0.0.1:11434/v1"))
@@ -336,11 +340,12 @@ FocusScope {
 
   function buildProfile() {
     return {
-      version: 8,
+      version: 10,
       complete: true,
       appearance: {
         theme: "omarchy",
         density: wizard.density,
+        article_images: wizard.articleImages,
         background: wizard.backgroundStyle,
         footer_link: wizard.valueOr(
           wizard.profile && wizard.profile.appearance
@@ -381,6 +386,7 @@ FocusScope {
       },
       ai: {
         mode: wizard.aiMode,
+        context_framing: wizard.contextFraming,
         system_model: wizard.systemAiModel,
         system_effort: wizard.systemAiEffort,
         local_url: wizard.localAiUrl.trim(),
@@ -635,6 +641,17 @@ FocusScope {
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.Wrap
           }
+        }
+
+        Toggle {
+          width: parent.width
+          label: "Show article images"
+          description: "Optional feed-supplied thumbnails. Loads images from publisher image hosts as you scroll and keeps a limited local cache."
+          checked: wizard.articleImages
+          foreground: wizard.foreground
+          accent: wizard.accent
+          fontFamily: wizard.fontFamily
+          onClicked: wizard.articleImages = !wizard.articleImages
         }
 
         BorderSurface {
@@ -914,7 +931,7 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "ACTUAL SOURCE CATALOG  ·  "
+          text: "HIDE INDIVIDUAL SOURCES  ·  "
             + String(wizard.effectiveSourceOptions.length)
           color: wizard.accent
           font.family: wizard.fontFamily
@@ -926,7 +943,7 @@ FocusScope {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "Open the searchable list to see every publisher, feed host, region, source format, and topic. A checked source is individually hidden."
+          text: "Check a source to hide it; uncheck it to allow it again. Source packs still determine which other sources are active. Changes are saved only when you finish setup."
           color: wizard.dim
           font.family: wizard.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -936,9 +953,10 @@ FocusScope {
         MultiSelect {
           id: sourceCatalogPicker
           width: parent.width
-          showLabel: false
-          triggerLabel: "Browse all source names and feed hosts…"
-          noSelectionText: "Browse all source names and feed hosts…"
+          showLabel: true
+          label: "Checked = hidden · " + String(wizard.disabledSourceIds.length) + " hidden"
+          triggerLabel: "Choose sources to hide…"
+          noSelectionText: "No individually hidden sources"
           placeholderText: "Search publisher, host, region, type, or topic…"
           emptyText: "No catalog sources"
           values: wizard.disabledSourceIds
@@ -1302,6 +1320,18 @@ FocusScope {
 
         Toggle {
           width: parent.width
+          label: "Context & framing in AI summaries"
+          description: "Flag supported framing concerns, quote-context limits and evidence gaps in the supplied article. No outside sources are checked. Applies to your next TL;DR."
+          checked: wizard.contextFraming
+          enabled: wizard.aiMode !== "off"
+          foreground: wizard.foreground
+          accent: wizard.accent
+          fontFamily: wizard.fontFamily
+          onClicked: wizard.contextFraming = !wizard.contextFraming
+        }
+
+        Toggle {
+          width: parent.width
           label: "Learn from my reading choices"
           description: "Local entities and subjects with short- and long-term memory. Opens are weak; sustained reading, saves, and Show Less matter more. No cloud profile."
           checked: wizard.learnFromOpens
@@ -1315,7 +1345,7 @@ FocusScope {
           width: parent.width
           label: "Back marks the article read"
           description: wizard.markReadOnBack
-            ? "Back or Escape hides the finished story and returns to the main feed."
+            ? "For ordinary articles, Back or Escape marks read and returns to the feed. Daily Editions pauses; Coverage returns to its timeline."
             : "Back or Escape leaves the story available in the feed."
           checked: wizard.markReadOnBack
           foreground: wizard.foreground
@@ -1365,6 +1395,7 @@ FocusScope {
             { label: "SOURCES", value: String(wizard.activeSourceEstimate()) + " of " + String(wizard.effectiveSourceOptions.length) + " active · " + String(wizard.disabledSourceIds.length) + " individually hidden · " + String(wizard.customSources.length) + " custom" },
             { label: "DISCOVERY", value: String(wizard.discoveryPercent) + "% outside your usual mix" },
             { label: "ALERTS", value: wizard.notificationsEnabled ? "On · quiet " + wizard.quietStart + "–" + wizard.quietEnd + " · max " + String(wizard.notificationMax) + "/day" : "Notifications off" },
+            { label: "CONTEXT & FRAMING", value: wizard.aiMode === "off" ? "Inactive · AI is disabled" : (wizard.contextFraming ? "Included in requested summaries · supplied article only" : "Off") },
             { label: "AI", value: wizard.aiMode === "system" ? "System AI · " + wizard.systemAiSummary() : (wizard.aiMode === "local" ? "Local server · " + wizard.localAiModel : "Disabled") },
             { label: "ARTICLE BACK", value: wizard.markReadOnBack ? "Mark read, hide, and return to feed" : "Return without hiding" },
             { label: "LEARNING", value: wizard.learnFromOpens ? "Local reading-choice memory enabled" : "Learned curation disabled" }

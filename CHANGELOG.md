@@ -3,6 +3,32 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.24.0] - 2026-09-06
+
+### Added
+
+- Optional feed-supplied article thumbnails in headlines, search and Daily
+  Editions. Defaults off, follows profile export/import, respects each reading
+  style and falls back to text when images are unavailable. Visible rows share
+  one bounded downloader and an expiring 32 MiB local cache. The reader also
+  centers the whole image below its headline and source, folds it away on
+  downward scrolling and unfolds it on upward scrolling; no article-page
+  crawling, image service or extra dependency.
+- Optional Context & framing in AI summaries, off by default in Setup and
+  Profile. Adds supported framing concerns, quote-context limits and evidence
+  gaps using the supplied article only, within the existing AI request.
+  Includes an explicit scope notice and separate cache identity; the preference
+  follows profile export/import. No AI remains fully disabled.
+
+### Fixed
+
+- Recover Mark Read and Dismiss when their helper fails to start or exits
+  unsuccessfully. Keep each action intact until its row animation and saved
+  acknowledgement finish, including during rapid repeated input.
+- Clarify checked sources as hidden in setup, and align Help/Profile wording
+  with Daily Editions, Coverage and History → Hidden.
+- Fix the empty-feed loading icon's animation visibility reference.
+
 ## [0.23.0] - 2026-09-05
 
 ### Added

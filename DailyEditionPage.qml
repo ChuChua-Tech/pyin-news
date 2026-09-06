@@ -7,6 +7,7 @@ Item {
   property var edition: null
   property bool busy: false
   property string errorText: ""
+  property var imageCache: null
   property bool compact: false
   property bool separators: true
   property int minutes: 15
@@ -208,17 +209,30 @@ Item {
       required property var modelData
       required property int index
       width: stories.width
-      height: copy.implicitHeight + Style.spacing.lg * 2
+      height: Math.max(copy.implicitHeight, editionImage.height) + Style.spacing.lg * 2
       Rectangle {
         anchors.fill: parent
         radius: Style.cornerRadius
         color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, page.selectedIndex === card.index ? 0.08 : 0)
       }
+      StoryThumbnail {
+        id: editionImage
+        anchors.right: parent.right
+        anchors.rightMargin: Style.spacing.md
+        anchors.top: parent.top
+        anchors.topMargin: Style.spacing.md
+        imageCache: page.imageCache
+        articleId: String(card.modelData.id || "")
+        imageHint: String(card.modelData.image_url || "")
+        compact: page.compact
+        inViewport: page.visible && card.y + card.height > stories.contentY
+          && card.y < stories.contentY + stories.height
+      }
       Column {
         id: copy
         x: Style.spacing.md
         y: Style.spacing.md
-        width: Math.max(0, parent.width - x * 2)
+        width: Math.max(0, parent.width - x * 2 - (editionImage.width > 0 ? editionImage.width + Style.spacing.md : 0))
         spacing: Style.spacing.sm
         Text {
           width: parent.width

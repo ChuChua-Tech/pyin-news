@@ -75,7 +75,8 @@ stores its article cache, reading history, bookmarks, alerts, current edition,
 and curation profile locally. Normal refreshes contact configured RSS/Atom
 endpoints. Reading a synopsis uses cached feed text; requesting a TL;DR can also
 fetch the publisher's article page, and Open Original opens that page in your
-browser.
+browser. Optional article images also contact publisher/CDN image hosts as
+headlines become visible; disabling images prevents these image requests.
 
 AI never ranks the feed and runs only after an explicit TL;DR or question. In
 System AI mode, the supplied article text is sent to the selected agent's
@@ -175,6 +176,33 @@ Geography is deliberately separate from subject topics: the saved location
 provides each reader's local and national lens, while country names such as
 Canada remain ordinary searchable source metadata rather than privileged
 universal categories.
+
+### Optional article images
+
+Enable **Show article images** in Setup's appearance page or
+**Profile → Customize**. It defaults to off and follows profile export/import.
+Small thumbnails appear beside headlines in the feed, search and Daily Editions.
+When reading a story, its image is centered below the headline and source, above
+the reading controls. It uses the same cache, preserves the whole picture and
+adapts to narrow windows; Compact uses a shorter frame. The first Down/j or
+downward scroll folds a visible image away to free reading space. Up/k or
+upward scrolling unfolds it; images above your current position return as you
+scroll back toward the headline. New stories start with the image expanded.
+Calm and Classic use an 88 × 66 thumbnail; Compact uses 64 × 48 (scaled with the
+shell). Classic keeps its separator-free layout. Missing or unusable images
+leave text-only rows, and photographs retain their original colors.
+
+PYIN uses image metadata and embedded image links already supplied by feeds;
+it does not crawl article pages to find extra pictures. Older cached stories
+acquire image metadata on their next successful feed refresh. Only visible
+rows request images, one at a time. Downloads accept bounded JPEG, PNG and WebP
+images from public web hosts, without cookies, referrers or a third-party image
+service. Unsupported/animated images are skipped.
+
+The local cache at `~/.cache/chuchua-news/images/` (or under `XDG_CACHE_HOME`)
+is limited to 32 MiB and 128 entries, with seven-day expiry checked when used.
+Failures are briefly cached to avoid repeated requests. No extra Python
+packages, AI calls or background service are required.
 
 ## Daily Editions
 
@@ -370,6 +398,26 @@ and disclose the limits of a one-source summary. These are instructions to the
 model, not independent fact-checking or a guarantee of accuracy or impartiality.
 Important claims should still be checked in the original article and, where
 warranted, other sources.
+
+### Optional context and framing
+
+Setup's AI page and Profile → Customize include **Context & framing in AI
+summaries**, off by default. When enabled, your next TL;DR asks the same model
+to add a short section identifying supported framing concerns, quote-context
+limits, and gaps between claims and the evidence supplied. Observations should
+cite a short phrase or a specific gap, distinguish a speaker's opinion from the
+reporter's wording, and acknowledge when no specific concern is supported.
+
+This uses the supplied article excerpt only. It does not browse for original
+transcripts or verify other sources, rate an outlet's bias, or guarantee that
+the AI identifies every issue correctly. A short quotation alone is not evidence
+that it was taken out of context. The result displays a reminder that original
+quote context has not been independently checked.
+
+The option uses the existing summary request, with a slightly longer answer;
+there is no second AI call. Changing it affects the next requested summary and
+keeps ordinary and context-enabled cached answers separate. It follows profile
+export/import, defaults to off for older profiles, and is inactive with No AI.
 
 ## Curation and alerts
 

@@ -36,6 +36,13 @@ Item {
   readonly property int maxArticles: Math.max(10, Math.min(100,
     parseInt(setting("maxArticles", 30), 10) || 30))
   readonly property string interests: String(setting("interests", "") || "")
+  property bool articleImagesSaving: false
+  property int articleImagesRevision: 0
+  readonly property bool articleImages: root.setupAppearance.article_images === true
+  property bool contextFramingSaving: false
+  property int contextFramingRevision: 0
+  property bool resultContextFraming: false
+  readonly property bool contextFraming: root.setupAi.context_framing === true
   property var setupData: ({})
   property int setupRevision: 0
   property bool setupReturningToProfile: false
@@ -220,10 +227,15 @@ Item {
   property bool visualHideFromSearch: false
   property var deferredReadMutationPayload: null
   property bool deferredReadMutationShowLess: false
+  property bool readMutationActive: false
+  property int readMutationRevision: 0
   property var readMutationContext: ({})
   property var dismissMutationContext: ({})
   property bool pendingTopicSave: false
   property string aiAction: ""
+  property bool readingImageFolded: false
+  property bool adjustingReadingImage: false
+  onActiveArticleIdChanged: root.readingImageFolded = false
   property string activeArticleId: ""
   property var activeArticle: null
   property string pendingDeepLinkArticleId: ""
@@ -266,6 +278,7 @@ Item {
   onSelectedIndexChanged: root.feedbackTargetIndex = 0
 
   onViewModeChanged: {
+    if (root.viewMode !== "result") root.readingImageFolded = false
     root.syncReadingEngagement()
     if (root.viewMode !== "event" && root.viewMode !== "result" && root.viewMode !== "about") {
       root.eventArticleOpen = false
@@ -324,7 +337,7 @@ Item {
 
     { section: "HOME ROW", keys: "a / A", action: "Open the Article Actions HUD; choose by letter or with j/k and Enter" },
     { section: "HOME ROW", keys: "a, then u", action: "Tune the feed with a direction, exact subject or source, and duration" },
-    { section: "HOME ROW", keys: "d", action: "Mark the current story read; existing cards slide up and any refill joins the bottom. Read history can restore it" },
+    { section: "HOME ROW", keys: "d", action: "Mark the current story read; History → Hidden can restore it. In a Daily Edition, mark done and advance" },
     { section: "HOME ROW", keys: "g", action: "Open Daily Editions: a fixed 5/15/30-minute selection with saved progress. Done advances; Back pauses." },
     { section: "HOME ROW", keys: "f", action: "Follow the selected article subject as a lasting interest" },
     { section: "HOME ROW", keys: "h", action: "Open History for viewed stories and the companion Hidden list" },
@@ -332,7 +345,7 @@ Item {
 
     { section: "BOTTOM ROW", keys: "c", action: "Reopen setup for topics, blacklist, sources, appearance, and other choices" },
     { section: "BOTTOM ROW", keys: "v", action: "Open the Read Later list" },
-    { section: "BOTTOM ROW", keys: "b  or  Esc", action: "Leave the view; article Back follows your Profile switch and can mark read + hide" },
+    { section: "BOTTOM ROW", keys: "b  or  Esc", action: "Leave the view; ordinary article Back follows your Profile switch. Daily Editions pauses; Coverage returns to its timeline" },
     { section: "BOTTOM ROW", keys: "n", action: "Open subject alerts" },
     { section: "BOTTOM ROW", keys: "m", action: "Save or remove the current story from Read Later" },
     { section: "BOTTOM ROW", keys: "/", action: "Focus Search News; in Help, focus the shortcut filter" },
@@ -343,7 +356,7 @@ Item {
     { section: "NAVIGATION KEYS", keys: "Backspace", action: "Dismiss the story, hide it, and teach Show Less; restoring from Read history reverses that signal" }
   ]
   readonly property var feedControlEntries: [
-    { option: "MAIN MENU", effect: "Keeps the same destinations on every page. Feed, Profile, and Help stay available; optional Read Later, History, Alerts, and the far-right freshness chip can be shown or hidden in Profile → Customize." },
+    { option: "MAIN MENU", effect: "Keeps the same destinations on every page. Feed, Daily Editions, Profile, and Help stay available; optional Read Later, History, Alerts, and the far-right freshness chip can be shown or hidden in Profile → Customize." },
     { option: "REFRESH INTERVAL", effect: "Controls how often active RSS feeds are checked. Background checks preserve the cards already on screen; pressing R intentionally starts a newly ranked session." },
     { option: "DAILY EDITIONS", effect: "G opens a fixed selection with estimated synopsis reading time. Done marks read; Skip completes the slot without a negative signal. Back pauses. Refreshes never refill an edition." },
     { option: "FEED SIZE", effect: "Chooses 15, 30, or 60 stories for the main feed. Choose your reading time separately in Daily Editions. Feed size does not change story scores." },
@@ -378,12 +391,13 @@ Item {
     { option: "ALERT DAILY LIMIT", effect: "Caps desktop notifications, not matching stories or their feed scores." },
     { option: "AI PROVIDER", effect: "Chooses System AI, a loopback local server, or no AI for requested TL;DRs. It never chooses the feed order." },
     { option: "AI MODEL", effect: "Agent default follows Omarchy's selected agent and its configured model. Choose a discovered model or enter its name to override it only for PYIN. Reasoning options come from the agent. Each request generates a fresh summary; feed ranking stays local." },
+    { option: "CONTEXT & FRAMING", effect: "Optionally adds supported framing concerns, quote-context limits and evidence gaps to requested AI summaries. Uses the supplied article only, without outside verification. Off by default." },
     { option: "EXTRA INTEREST KEYWORDS", effect: "Adds explicit keyword boosts beyond the setup topic catalog." },
     { option: "LEARNING", effect: "When off, no new reading signals are recorded and existing inferred memory stops affecting ranking." },
-    { option: "RETENTION", effect: "Controls how long ordinary cached articles and local learning history are kept. Saved stories are exempt." },
+    { option: "RETENTION", effect: "Controls how long ordinary cached articles and local learning history are kept. Saved stories and articles in the current Daily Edition are exempt." },
     { option: "APP UPDATES", effect: "Checks the stable Git branch only when requested. Installation requires confirmation and delegates validation, rollback, and reload to Omarchy; it never changes your local news data." },
     { option: "PERSONALIZED RANKING", effect: "One local engine combines setup choices, explicit interests, reading memory, freshness, diversity, and discovery. AI never chooses the feed order." },
-    { option: "BACK ACTION", effect: "Either returns immediately and marks the article read, or returns while leaving it available. Mark Read itself stays neutral." },
+    { option: "BACK ACTION", effect: "For ordinary articles, choose whether Back marks read or leaves the story available. Daily Editions pauses; Coverage returns to its timeline. Mark Read is neutral for personalization." },
     { option: "SEARCH NEWS", effect: "Searches all locally cached stories without AI, ranking personalization, blacklist filtering, or read-state filtering." },
     { option: "WHY THIS STORY", effect: "Explains the score components already used for the article. Opening it changes nothing." },
     { option: "RESET LEARNED HISTORY", effect: "Clears inferred reading and Show Less memory plus exposure records; explicit interests and hidden stories remain." },
@@ -503,7 +517,7 @@ Item {
   }
 
   function saveSetup(profile) {
-    if (setupSaveProc.running) return
+    if (root.articleImagesSaving || setupSaveProc.running) return
     root.statusText = "Saving your curation choices…"
     setupSaveProc.command = [root.backendPath, "setup", "--save-json", JSON.stringify(profile)]
     setupSaveProc.running = true
@@ -520,7 +534,7 @@ Item {
   }
 
   function exportProfile() {
-    if (profileTransferProc.running) return
+    if (root.articleImagesSaving || profileTransferProc.running) return
     root.profileTransferAction = "export"
     profileTransferProc.command = [
       root.backendPath, "setup", "--export",
@@ -531,7 +545,7 @@ Item {
   }
 
   function importProfile() {
-    if (profileTransferProc.running) return
+    if (root.articleImagesSaving || profileTransferProc.running) return
     root.profileTransferAction = "import"
     profileTransferProc.command = [
       root.backendPath, "setup", "--import",
@@ -609,6 +623,10 @@ Item {
 
   function feedDiagnostics(unused) {
     return JSON.stringify({
+      context_framing: root.contextFraming,
+      article_images: root.articleImages,
+      reading_image_ready: readingImage.imageReady,
+      reading_image_folded: root.readingImageFolded,
       reason: root.lastFeedApplyReason,
       preserved: root.lastFeedOrderPreserved,
       appended: root.stableFeedAppendCount,
@@ -964,6 +982,7 @@ Item {
   }
 
   function resetAiPresentation() {
+    root.resultContextFraming = false
     aiPresentationTimer.stop()
     root.aiReceivedText = ""
     root.aiStreamPhase = ""
@@ -1051,6 +1070,7 @@ Item {
     catch (e) { return }
     var event = String(payload.event || "")
     if (event === "meta") {
+      root.resultContextFraming = payload.context_framing === true
       root.aiCached = Boolean(payload.cached)
       var metaProvider = String(payload.provider || root.aiLabel)
       root.resultProvider = metaProvider
@@ -1180,6 +1200,38 @@ Item {
         else root.backToFeed()
       }
     }
+  }
+
+  function scrollReading(delta) {
+    delta = Number(delta)
+    if (root.viewMode !== "result" || !isFinite(delta) || delta === 0) return
+    resultScroll.cancelFlick()
+    if (readingImage.reserved) {
+      if (delta > 0 && !root.readingImageFolded) {
+        var onScreen = readingImageFrame.y + readingImageFrame.height > resultScroll.contentY
+          && readingImageFrame.y < resultScroll.contentY + resultScroll.height
+        root.readingImageFolded = true
+        // The first downward step trades the photo for reading space, without
+        // advancing past the opening lines of a short synopsis.
+        if (onScreen) return
+      } else if (delta < 0 && root.readingImageFolded) {
+        root.readingImageFolded = false
+      }
+    }
+    resultScroll.contentY = Math.max(0, Math.min(
+      Math.max(0, resultScroll.contentHeight - resultScroll.height), resultScroll.contentY + delta))
+  }
+
+  function keepReadingImageAnchor(before, after, top) {
+    if (root.viewMode !== "result" || resultScroll.contentY <= top) return
+    var spacing = resultColumn.spacing
+    var difference = after - before + (after > 0 ? spacing : 0) - (before > 0 ? spacing : 0)
+    var target = Math.max(top, resultScroll.contentY + difference)
+    root.adjustingReadingImage = true
+    resultColumn.forceLayout()
+    resultScroll.contentY = Math.max(0, Math.min(
+      Math.max(0, resultScroll.contentHeight - resultScroll.height), target))
+    root.adjustingReadingImage = false
   }
 
   function showArticle(article) {
@@ -1392,6 +1444,7 @@ Item {
 
   function summarizeArticle(article) {
     if (!article || root.aiBusy) return
+    if (root.contextFramingSaving) { root.statusText = "Finishing summary settings…"; return }
     if (!root.aiEnabled) {
       root.statusText = "AI is disabled in Profile → Edit setup"
       return
@@ -1606,7 +1659,7 @@ Item {
   }
 
   function setNavigationItemEnabled(item, enabled) {
-    if (navigationProc.running) return
+    if (root.articleImagesSaving || navigationProc.running) return
     var key = String(item)
     var next = []
     for (var i = 0; i < root.navigationItems.length; i++) {
@@ -1622,7 +1675,7 @@ Item {
   }
 
   function setFooterLink(label, url) {
-    if (footerLinkProc.running) return
+    if (root.articleImagesSaving || footerLinkProc.running) return
     var requested = {
       label: String(label || "").trim(),
       url: String(url || "").trim()
@@ -1892,7 +1945,7 @@ Item {
   }
 
   function setArticleBackMarksRead(enabled) {
-    if (behaviorProc.running) return
+    if (root.articleImagesSaving || behaviorProc.running) return
     behaviorProc.command = [
       root.backendPath, "setup", "--back-action", enabled ? "mark-read" : "keep"
     ]
@@ -1901,11 +1954,54 @@ Item {
   }
 
   function setSystemAiModel(model, effort) {
-    if (systemAiPresetProc.running || (model === root.systemAiModel && effort === root.systemAiEffort)) return
+    if (root.articleImagesSaving || root.contextFramingSaving || systemAiPresetProc.running || (model === root.systemAiModel && effort === root.systemAiEffort)) return
     systemAiPresetProc.command = [root.backendPath, "setup", "--system-ai-model-json",
       JSON.stringify({model: String(model), effort: String(effort)})]
     systemAiPresetProc.running = true
     root.statusText = "Saving PYIN's model choice…"
+  }
+
+  function setArticleImages(enabled) {
+    if (root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running
+        || navigationProc.running || footerLinkProc.running || behaviorProc.running
+        || setupSaveProc.running || profileTransferProc.running) return
+    root.articleImagesSaving = true
+    root.articleImagesRevision++
+    articleImagesProc.command = [root.backendPath, "setup", "--article-images", enabled ? "on" : "off"]
+    articleImagesProc.running = true
+    root.scheduleArticleImagesCheck()
+    root.statusText = "Saving article images preference…"
+  }
+
+  function scheduleArticleImagesCheck() {
+    var revision = root.articleImagesRevision
+    Qt.callLater(function() {
+      if (root.articleImagesSaving && revision === root.articleImagesRevision && !articleImagesProc.running) {
+        root.articleImagesSaving = false
+        root.statusText = "Could not save article images. Please try again."
+      }
+    })
+  }
+
+  function setContextFraming(enabled) {
+    if (root.contextFramingSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
+        || setupSaveProc.running || profileTransferProc.running) return
+    root.contextFramingSaving = true
+    root.contextFramingRevision++
+    contextFramingProc.command = [root.backendPath, "setup", "--context-framing", enabled ? "on" : "off"]
+    contextFramingProc.running = true
+    root.scheduleContextFramingCheck()
+    root.statusText = "Saving context & framing preference…"
+  }
+
+  function scheduleContextFramingCheck() {
+    var revision = root.contextFramingRevision
+    Qt.callLater(function() {
+      if (root.contextFramingSaving && revision === root.contextFramingRevision && !contextFramingProc.running) {
+        root.contextFramingSaving = false
+        root.statusText = "Could not save context & framing. Please try again."
+      }
+    })
   }
 
   function loadAiModels(refresh) {
@@ -2213,10 +2309,48 @@ Item {
     root.loadFeed(true, "mutation-rollback")
   }
 
+  function checkReadMutationLaunch(revision, showLess) {
+    if (!root.readMutationActive || revision !== root.readMutationRevision
+        || readMutationProc.running || dismissProc.running) return
+    root.failReadMutation(showLess, "Could not start the save. Please try again.")
+  }
+
+  function scheduleReadMutationCheck(showLess) {
+    var revision = root.readMutationRevision
+    Qt.callLater(function() { root.checkReadMutationLaunch(revision, showLess) })
+  }
+
+  function failReadMutation(showLess, message) {
+    root.readMutationActive = false
+    root.readMutationRevision++
+    root.rollbackOptimisticHide(showLess ? root.dismissMutationContext : root.readMutationContext)
+    if (showLess) root.dismissMutationContext = ({})
+    else root.readMutationContext = ({})
+    root.statusText = message
+  }
+
+  function acceptReadMutation(payload, showLess, exitCode, exitStatus) {
+    if (!root.readMutationActive) return
+    // An exit acknowledges this launch even while the row finishes collapsing.
+    // Invalidate its failed-start fallback, and retain the lock until applied.
+    root.readMutationRevision++
+    if (exitCode !== 0 || exitStatus !== 0 || !payload || payload.ok !== true
+        || typeof payload.article_id !== "string" || typeof payload.read !== "boolean") {
+      root.failReadMutation(showLess, String(payload && payload.error
+        || (showLess ? "Could not dismiss story. Please try again."
+          : "Could not update read state. Please try again.")))
+      return
+    }
+    root.finishOrDeferReadMutation(payload, showLess)
+  }
+
   function toggleRead(article) {
-    if (!article || !article.id || readMutationProc.running || dismissProc.running)
+    if (!article || !article.id || root.readMutationActive
+        || readMutationProc.running || dismissProc.running)
       return false
     var enabled = !Boolean(article.read)
+    root.readMutationActive = true
+    root.readMutationRevision++
     root.readMutationContext = enabled
       ? root.beginOptimisticHide(article, false) : ({})
     readMutationProc.command = [
@@ -2224,6 +2358,7 @@ Item {
       "--related-json", JSON.stringify(article.cluster_ids || [])
     ]
     readMutationProc.running = true
+    root.scheduleReadMutationCheck(false)
     root.statusText = enabled
       ? "Marking read and hiding from your feed…" : "Restoring story to your feed…"
     return true
@@ -2236,22 +2371,26 @@ Item {
   }
 
   function dismissArticle(article) {
-    if (!article || !article.id || dismissProc.running || readMutationProc.running
-        || root.aiBusy) return
+    if (!article || !article.id || root.readMutationActive
+        || dismissProc.running || readMutationProc.running || root.aiBusy) return
     if (Boolean(article.read)) {
-      root.statusText = "This story is already hidden · restore it from Profile → Read first"
+      root.statusText = "This story is already hidden · restore it from History → Hidden first"
       return
     }
+    root.readMutationActive = true
+    root.readMutationRevision++
     root.dismissMutationContext = root.beginOptimisticHide(article, true)
     dismissProc.command = [
       root.backendPath, "dismiss", "--id", String(article.id),
       "--related-json", JSON.stringify(article.cluster_ids || [])
     ]
     dismissProc.running = true
+    root.scheduleReadMutationCheck(true)
     root.statusText = "Dismissing story and adding a local Show Less signal…"
   }
 
   function applyReadMutation(payload, showLess) {
+    root.readMutationActive = false
     // Persistence is complete. Advance the generation again so every feed
     // calculation started before or during the write is now stale.
     root.feedMutationRevision++
@@ -2671,6 +2810,59 @@ Item {
     }
   }
 
+  ArticleImageCache {
+    id: articleImageCache
+    backendPath: root.backendPath
+    active: root.articleImages && root.opened && !root.articleImagesSaving
+  }
+
+  Process {
+    id: articleImagesProc
+    stdout: StdioCollector { id: articleImagesStdout; waitForEnd: true }
+    stderr: StdioCollector { id: articleImagesStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) root.scheduleArticleImagesCheck()
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.articleImagesSaving = false
+      root.articleImagesRevision++
+      var payload = root.parsePayload(articleImagesStdout.text, "Could not save article images")
+      if (exitCode !== 0 || Boolean(exitStatus) || !payload || !payload.ok
+          || !payload.profile || !payload.profile.appearance
+          || typeof payload.profile.appearance.article_images !== "boolean") {
+        root.statusText = String(payload && payload.error || "Could not save article images. Please try again.")
+        return
+      }
+      root.setupData = payload
+      root.setupRevision++
+      root.statusText = "Article images " + (payload.profile.appearance.article_images ? "on" : "off") + ""
+      if (root.viewMode === "profile") root.loadProfile()
+    }
+  }
+  Process {
+    id: contextFramingProc
+    stdout: StdioCollector { id: contextFramingStdout; waitForEnd: true }
+    stderr: StdioCollector { id: contextFramingStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) root.scheduleContextFramingCheck()
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.contextFramingSaving = false
+      root.contextFramingRevision++
+      var payload = root.parsePayload(contextFramingStdout.text, "Could not save context & framing")
+      if (exitCode !== 0 || Boolean(exitStatus) || !payload || !payload.ok
+          || !payload.profile || !payload.profile.ai
+          || typeof payload.profile.ai.context_framing !== "boolean") {
+        root.statusText = String(payload && payload.error || "Could not save context & framing. Please try again.")
+        return
+      }
+      root.setupData = payload
+      root.setupRevision++
+      root.statusText = "Context & framing " + (payload.profile.ai.context_framing ? "on" : "off") + " · applies to your next TL;DR"
+      if (root.viewMode === "profile") root.loadProfile()
+    }
+  }
+
   Process {
     id: systemAiPresetProc
     stdout: StdioCollector { id: systemAiPresetStdout; waitForEnd: true }
@@ -3046,16 +3238,12 @@ Item {
     id: readMutationProc
     stdout: StdioCollector { id: readMutationStdout; waitForEnd: true }
     stderr: StdioCollector { id: readMutationStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      var payload = root.parsePayload(readMutationStdout.text,
-        String(readMutationStderr.text || "Could not update read state"))
-      if (!payload.ok) {
-        root.rollbackOptimisticHide(root.readMutationContext)
-        root.readMutationContext = ({})
-        root.statusText = payload.error || "Could not update read state"
-        return
-      }
-      root.finishOrDeferReadMutation(payload, false)
+    onRunningChanged: {
+      if (!running) root.scheduleReadMutationCheck(false)
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.acceptReadMutation(root.parsePayload(readMutationStdout.text,
+        String(readMutationStderr.text || "Could not update read state")), false, exitCode, exitStatus)
     }
   }
 
@@ -3063,16 +3251,12 @@ Item {
     id: dismissProc
     stdout: StdioCollector { id: dismissStdout; waitForEnd: true }
     stderr: StdioCollector { id: dismissStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      var payload = root.parsePayload(dismissStdout.text,
-        String(dismissStderr.text || "Could not dismiss story"))
-      if (!payload.ok) {
-        root.rollbackOptimisticHide(root.dismissMutationContext)
-        root.dismissMutationContext = ({})
-        root.statusText = payload.error || "Could not dismiss story"
-        return
-      }
-      root.finishOrDeferReadMutation(payload, true)
+    onRunningChanged: {
+      if (!running) root.scheduleReadMutationCheck(true)
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.acceptReadMutation(root.parsePayload(dismissStdout.text,
+        String(dismissStderr.text || "Could not dismiss story")), true, exitCode, exitStatus)
     }
   }
 
@@ -3398,9 +3582,7 @@ Item {
           else if (root.viewMode === "event" && dy !== 0) eventPage.moveCursor(dy)
           else if (root.viewMode === "edition" && dy !== 0) editionPage.moveCursor(dy)
           else if (root.viewMode === "result" && dy !== 0)
-            resultScroll.contentY = Math.max(0,
-              Math.min(Math.max(0, resultScroll.contentHeight - resultScroll.height),
-                resultScroll.contentY + dy * Style.space(70)))
+            root.scrollReading(dy * Style.space(70))
           else if (root.viewMode === "help" && dx !== 0)
             root.setHelpTab(dx > 0 ? "feed" : "keys")
           else if (root.viewMode === "help" && dy !== 0)
@@ -3905,6 +4087,7 @@ Item {
             onVisibleChanged: root.queueVisibleImpressions()
 
             delegate: CursorSurface {
+              id: headlineRow
               required property var modelData
               required property int index
               readonly property bool leavingFeed:
@@ -3928,10 +4111,23 @@ Item {
                 NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
               }
 
+              StoryThumbnail {
+                id: headlineImage
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                anchors.verticalCenter: parent.verticalCenter
+                imageCache: articleImageCache
+                articleId: String(modelData.id || "")
+                imageHint: String(modelData.image_url || "")
+                compact: root.compactDensity
+                inViewport: headlineList.visible && headlineRow.y + headlineRow.height > headlineList.contentY
+                  && headlineRow.y < headlineList.contentY + headlineList.height
+              }
+
               Item {
                 anchors.fill: parent
                 anchors.leftMargin: Style.spacing.rowPaddingX
-                anchors.rightMargin: Style.spacing.rowPaddingX
+                anchors.rightMargin: Style.spacing.rowPaddingX + (headlineImage.width > 0 ? headlineImage.width + Style.spacing.md : 0)
                 anchors.topMargin: Style.spacing.lg
                 anchors.bottomMargin: Style.spacing.lg
 
@@ -4075,6 +4271,7 @@ Item {
               }
 
               Text {
+                id: emptyFeedIcon
                 anchors.centerIn: parent
                 visible: !parent.parent.initialFeedLoading
                 textFormat: Text.PlainText
@@ -4086,7 +4283,7 @@ Item {
                 font.pixelSize: Style.font.displayLarge
 
                 RotationAnimator on rotation {
-                  running: parent.visible
+                  running: emptyFeedIcon.visible
                     && (loadProc.running || refreshProc.running || searchProc.running)
                   from: 0; to: 360
                   duration: 900
@@ -4104,7 +4301,7 @@ Item {
                 : ((bootstrapProc.running || loadProc.running || refreshProc.running)
                   ? "Building your personalized local feed…"
                   : (Number(root.feedStats.read_hidden || 0) > 0
-                    ? "You're caught up. Read stories stay hidden; restore them from Profile → Read."
+                    ? "You're caught up. Read stories stay hidden; restore them from History → Hidden."
                     : "No cached stories yet. Press R to refresh."))
               color: root.foreground
               font.family: root.fontFamily
@@ -4127,6 +4324,7 @@ Item {
           }
 
           DailyEditionPage {
+            imageCache: articleImageCache
             id: editionPage
             anchors.fill: parent
             visible: root.viewMode === "edition"
@@ -4142,12 +4340,33 @@ Item {
 
           Flickable {
             id: resultScroll
+            objectName: "pyinResultScroll"
             anchors.fill: parent
             visible: root.viewMode === "result"
             clip: true
             contentWidth: width
             contentHeight: resultColumn.implicitHeight
             boundsBehavior: Flickable.StopAtBounds
+
+            property real previousScrollY: 0
+            onContentYChanged: {
+              var delta = contentY - previousScrollY
+              previousScrollY = contentY
+              // Direct touch/mouse dragging still belongs to Flickable.
+              if (dragging && !root.adjustingReadingImage && !readingImageFoldAnimation.running
+                  && readingImage.reserved && Math.abs(delta) > 2)
+                root.readingImageFolded = delta > 0
+            }
+            WheelHandler {
+              target: null
+              acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+              onWheel: function(event) {
+                var delta = event.pixelDelta.y !== 0 ? -event.pixelDelta.y
+                  : -event.angleDelta.y / 120 * Style.space(70)
+                if (delta !== 0) root.scrollReading(delta)
+                event.accepted = delta !== 0
+              }
+            }
 
             Column {
               id: resultColumn
@@ -4207,11 +4426,60 @@ Item {
                 }
               }
 
+              Item {
+                id: readingImageFrame
+                objectName: "pyinReadingImageFrame"
+                width: parent.width
+                property real reveal: root.readingImageFolded ? 0 : 1
+                property real previousHeight: 0
+                height: readingImage.height * reveal
+                visible: readingImage.reserved && height > 0
+                clip: true
+                onHeightChanged: {
+                  if (readingImageFoldAnimation.running)
+                    root.keepReadingImageAnchor(previousHeight, height, y)
+                  previousHeight = height
+                }
+                Behavior on reveal {
+                  NumberAnimation {
+                    id: readingImageFoldAnimation
+                    duration: 160
+                    easing.type: Easing.OutCubic
+                  }
+                }
+                StoryThumbnail {
+                  id: readingImage
+                  objectName: "pyinReadingImage"
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  imageCache: articleImageCache
+                  articleId: root.activeArticleId
+                  imageHint: String(root.activeArticle && root.activeArticle.image_url || "")
+                  compact: root.compactDensity
+                  reading: true
+                  availableWidth: resultColumn.width
+                  inViewport: root.viewMode === "result" && root.activeArticle !== null
+                    && (!root.readingImageFolded || String(readingImage.localPath || "") !== "")
+                    && readingImageFrame.y + readingImage.height > resultScroll.contentY
+                    && readingImageFrame.y < resultScroll.contentY + resultScroll.height
+                }
+              }
+
               Rectangle {
                 width: parent.width
                 height: Style.spacing.hairline
                 color: root.foreground
                 opacity: 0.12
+              }
+
+              Text {
+                width: parent.width
+                visible: root.resultKind === "ai" && root.resultContextFraming
+                textFormat: Text.PlainText
+                text: "Context & framing uses the supplied article only. Original quote context is not independently checked. AI may miss or misinterpret context."
+                wrapMode: Text.Wrap
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
               }
 
               Row {
@@ -5228,6 +5496,12 @@ Item {
             setupSummaryText: root.setupSummary() + "\n" + root.setupLocationSummary()
             setupDetailsText: root.setupChoiceDetails()
             sourceMixText: root.sourceMixSummary()
+            articleImages: root.articleImages
+            articleImagesBusy: root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running || setupSaveProc.running || profileTransferProc.running || navigationProc.running || footerLinkProc.running || behaviorProc.running
+            onArticleImagesRequested: function(enabled) { root.setArticleImages(enabled) }
+            contextFraming: root.contextFraming
+            contextFramingBusy: root.contextFramingSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
+            onContextFramingRequested: function(enabled) { root.setContextFraming(enabled) }
             aiProvider: root.aiProvider
             aiSummary: root.aiProvider === "system"
               ? String(root.systemAiStatus.message || "Checking selected agent…") + "\n"
@@ -5256,12 +5530,12 @@ Item {
             showLessTermText: root.showLessTermSummary()
             showLessSourceText: root.showLessSourceSummary()
             profileBusy: profileProc.running
-            navigationBusy: navigationProc.running
-            behaviorBusy: behaviorProc.running
-            footerLinkBusy: footerLinkProc.running
-            aiPresetBusy: systemAiPresetProc.running
+            navigationBusy: root.articleImagesSaving || navigationProc.running
+            behaviorBusy: root.articleImagesSaving || behaviorProc.running
+            footerLinkBusy: root.articleImagesSaving || footerLinkProc.running
+            aiPresetBusy: root.articleImagesSaving || systemAiPresetProc.running || root.contextFramingSaving
             interestBusy: interestProc.running
-            transferBusy: profileTransferProc.running
+            transferBusy: root.articleImagesSaving || profileTransferProc.running
             resetBusy: profileResetProc.running || root.readingEventsBusy
             updateBusy: updateStatusProc.running
             updateLaunching: root.applicationUpdateLaunching
