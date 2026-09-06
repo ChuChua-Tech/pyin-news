@@ -61,32 +61,37 @@ Updates preserve the local database and user-owned source configuration.
 omarchy plugin remove tech.chuchua.news
 ```
 
-Removal deletes the plugin code but intentionally leaves the user's database
-and optional source override in place. To erase those records too, move
+Removal deletes the plugin code but intentionally leaves the user's database and
+optional source override in place. To erase those records too, move
 `~/.local/state/chuchua-news/` and `~/.config/chuchua-news/` to Trash after
 removing the plugin. Profile → Data & Privacy can reset or export personal data
-before removal.
+before removal. Profile export transfers settings and explicit interests; it is
+not a backup of the article cache or reading library.
 
 ## Privacy and network boundaries
 
 PYIN has no account, advertising, analytics, tracking pixel, or telemetry. It
-stores its article cache, reading history, bookmarks, alerts, and curation
-profile locally. Normal refreshes contact only configured RSS/Atom endpoints;
-opening or summarizing a story can also fetch that publisher's article page.
+stores its article cache, reading history, bookmarks, alerts, current edition,
+and curation profile locally. Normal refreshes contact configured RSS/Atom
+endpoints. Reading a synopsis uses cached feed text; requesting a TL;DR can also
+fetch the publisher's article page, and Open Original opens that page in your
+browser.
 
 AI never ranks the feed and runs only after an explicit TL;DR or question. In
-System AI mode, the supplied article text is sent to the selected agent's configured
-model. In Local server mode, it is sent only to the configured loopback
-endpoint. With No AI selected, article text is not sent to any model. The
-feedback form opens a local pre-addressed email draft and sends nothing until
-the user chooses to send it.
+System AI mode, the supplied article text is sent to the selected agent's
+configured model. In Local server mode, it is sent only to the configured
+loopback endpoint. With No AI selected, article text is not sent to any model.
+The feedback form opens a local pre-addressed email draft and sends nothing
+until the user chooses to send it. Explicit update checks contact GitHub;
+opening or refreshing the model picker can contact the selected agent’s service
+for its catalog without submitting an AI prompt.
 
 ## Controls
 
 - `j` / `k` or arrow keys: move through stories
 - `Tab` / `Shift+Tab`: move through the persistent menu and page controls; `Enter` or `Space` activates the focused control
 - `Enter` or left-click: open the feed-provided synopsis without AI
-- `e`: open Event Desk for the current story; its synopsis also has an Event Desk button
+- `e`: open Coverage for the current story; its synopsis also has a Coverage button
 - `o`: open the selected story in the browser
 - `t`, `s`, or right-click: create an AI TL;DR for the selected story
 - `a` or `A`: open the keyboard-first Article Actions HUD for the selected story
@@ -96,16 +101,16 @@ the user chooses to send it.
 - `-`: show less news about the selected subject
 - `/`: focus Search News; in `?` Help, focus its instant shortcut filter
 - `m`: save or remove the current story from Read Later
-- `d`: mark the current story read and hide it from the ranked feed; press again to restore it
+- `d`: mark the current story read; in Hidden history, restore the selected story. In an edition article, mark done and advance
 - `g`: open Daily Editions; choose a fixed 5/15/30-minute selection and resume saved progress
 - `v`: open the Read Later list
-- `h`: open History, with Viewed and Hidden companion lists
+- `h`: open History, with Viewed and Hidden tabs
 - `n`: manage subject alerts
 - `p`: inspect your local curation profile
 - `c`: reopen the setup wizard
 - `r`: check active RSS sources; the freshness chip shows age, progress, and results
 - `i` or click the `PYIN` masthead: read the story behind the name and chuchua.tech
-- `b` or `Esc`: leave the current view; on an article, either mark it read and return to the main feed or return without hiding, according to your Back-action switch
+- `b` or `Esc`: leave the current view; on an ordinary article, follow your Back-action switch. In Daily Editions, pause; in Coverage, return to the timeline
 - `?`: show the searchable Keys and Feed Controls reference
 - `q`: close PYIN News
 - right- or middle-click the bar icon: refresh feeds
@@ -196,16 +201,16 @@ edition is kept, and no AI call is needed to create or finish one.
 
 ## Navigation, History, and Profile
 
-The same ordered main menu remains at the top of Feed, Search, article,
-Read Later, History, Alerts, Profile, Help, and About views. A contextual Back
-button becomes the left-most control wherever it is needed. The stable order is
-Feed, Read Later, History, Alerts, Profile, and Help, followed by a separated
-freshness chip at the far right. The chip reads `NOW` or the age of the latest
-source check; while working it becomes a terminal scan, then briefly reports
-the new-story count, success, or failures. Profile → Customize can show or hide
-the optional Read Later, History, Alerts, and freshness controls; Feed, Profile,
-and Help always remain available so the reader cannot customize itself into a
-dead end.
+The same ordered main menu remains at the top of Feed, Search, article, Daily
+Editions, Coverage, Read Later, History, Alerts, Profile, Help, and About views.
+A contextual Back button becomes the left-most control wherever it is needed.
+The stable order is Feed, Daily Editions, Read Later, History, Alerts, Profile,
+and Help, followed by a separated freshness chip at the far right. The chip
+reads `NOW` or the age of the latest source check; while working it becomes a
+terminal scan, then briefly reports the new-story count, success, or failures.
+Profile → Customize can show or hide the optional Read Later, History, Alerts,
+and freshness controls; Feed, Daily Editions, Profile, and Help always remain
+available so the reader cannot customize itself into a dead end.
 
 The bottom-right footer is unbranded by default. Profile → Customize can add one
 user-owned HTTP/HTTPS link with a short label, or clear it again. The setting is
@@ -219,11 +224,11 @@ being enabled. Every deliberate reopen updates the visit count and latest-view
 time; repeated visits do not repeatedly increase the story's learning weight.
 The reader saves visits in order and updates its counts after each save succeeds.
 
-Profile is organized into four collapsed groups: Customize, Your Choices,
-Learned Curation, and Data & Privacy. A compact Library & Controls block keeps
-History, Read Later, Hidden, Alerts, and Edit Setup immediately reachable. The
-full viewed-story list now lives on History instead of expanding the Profile
-page indefinitely.
+Profile is organized into five collapsed groups: Customize, Your Choices,
+Learned Curation, App & Updates, and Data & Privacy, with a separate Source
+Health section. A compact Library & Controls block keeps History, Read Later,
+Hidden, Alerts, and Edit Setup immediately reachable. The full viewed-story list
+now lives on History instead of expanding the Profile page indefinitely.
 
 ## AI providers
 
@@ -299,22 +304,23 @@ catalog search, ranking system, source catalog, bookmarks, and alerts available.
 
 ## Responsive article actions
 
-Mark Read and Dismiss remove the selected story and every visible member of its
-event cluster from the panel immediately, then persist the change in the
-background. Feed calculations carry a mutation generation, so a calculation
-started before the action cannot put stale stories back on screen. A failed
-write restores the optimistic local change and reports the error.
+In the ordinary feed, Mark Read and Dismiss remove the selected story and every
+visible member of its event cluster from the panel immediately, then persist the
+change in the background. Feed calculations carry a mutation generation, so a
+calculation started before the action cannot put stale stories back on screen. A
+failed write restores the optimistic local change and reports the error.
 
 The configured feed size is still replenished after each removal, but that
-background result is merged into the current reading session instead of replacing
-its ranking. Every surviving headline keeps its relative position, the reader's
-selected story and scroll offset stay anchored, and replacement stories arrive at
-the bottom. The dismissed card now fades and collapses first, visibly carrying the
-existing cards below it upward instead of swapping the row's contents in place;
-the status line confirms how many replacement cards were appended. Automatic
-source checks merge without disturbing the active session. Pressing `r`, changing
-curation controls, or reopening the panel intentionally starts a newly ranked
-session.
+background result is merged into the current reading session instead of
+replacing its ranking. Every surviving headline keeps its relative position, the
+reader's selected story and scroll offset stay anchored, and replacement stories
+arrive at the bottom. The dismissed card now fades and collapses first, visibly
+carrying the existing cards below it upward instead of swapping the row's
+contents in place; the status line confirms how many replacement cards were
+appended. Automatic source checks merge without disturbing the active session.
+Pressing `r`, changing curation controls, or reopening the panel intentionally
+starts a newly ranked session. Daily Editions keeps its fixed selection and
+saved progress throughout; these replenishment rules apply to the ordinary feed.
 
 Session-preserving order is also the internal default: every asynchronous feed
 load must opt in explicitly before it may replace the visible ranking. Each load
@@ -356,14 +362,14 @@ and uncertainty work without pretending an independent fact-check is happening.
 The treatment is inspired by Omarchy's text branding, while remaining native QML
 rather than launching a terminal process inside the reader.
 
-Every AI request includes the bundled
+Every article TL;DR request includes the bundled
 `skills/journalistic-news-summary/SKILL.md`. It instructs the selected model to
 stay within the supplied article, preserve attribution and uncertainty, resist
 instructions embedded in article text, avoid loaded framing and false balance,
-and disclose the limits of a one-source summary. This substantially reduces
-unsupported or slanted output, but it is not independent fact-checking and no
-prompt can guarantee perfect accuracy or impartiality. Important claims should
-still be checked in the original article and, where warranted, other sources.
+and disclose the limits of a one-source summary. These are instructions to the
+model, not independent fact-checking or a guarantee of accuracy or impartiality.
+Important claims should still be checked in the original article and, where
+warranted, other sources.
 
 ## Curation and alerts
 
@@ -469,26 +475,25 @@ preserving the configured discovery lane.
 
 Backspace is intentionally different from ordinary Mark Read: it hides the
 currently grouped event and adds negative weights for its extracted entities,
-subjects, and publisher.
-Profile → Show Less Feedback exposes those values and recent dismissals.
-Restoring the story from Read history reverses its contribution; resetting
-learning removes inferred reading and Show Less weights, the exposure ledger,
-and legacy open counts, while leaving dismissed stories hidden and keeping
-explicit interest-graph choices until they are individually removed.
+subjects, and publisher. Profile → Learned Curation → Show Less exposes those
+values and recent dismissals. Restoring the story from History → Hidden reverses
+its contribution; resetting learning removes inferred reading and Show Less
+weights, the exposure ledger, and legacy open counts, while leaving dismissed
+stories hidden and keeping explicit interest-graph choices until they are
+individually removed.
 
 The Profile page is the control centre for topic choices, menu layout, article
-behaviour, AI speed, source setup, app updates, and local data. Its five primary groups and
-nested Setup & Source Mix and Show Less sections start collapsed, keeping
-everyday controls compact. Its Back-action switch chooses whether
-Back/Escape means “finished—mark read and hide” or simply returns without
-changing the story. The page also shows explicit choices, editable
+behaviour, AI model preferences, source setup, app updates, and local data. Its
+five primary groups and nested Setup & Source Mix and Show Less sections start
+collapsed, keeping everyday controls compact. Its Back-action switch chooses
+whether Back/Escape means “finished—mark read and hide” or simply returns
+without changing the story. The page also shows explicit choices, editable
 interest-graph nodes, active inferred subjects in both memory horizons, recent
-dismissals, and local data counts.
-Its two-step reset forgets inferred weights, exposure, and open history while
-preserving explicit interests, setup choices, saved stories, alerts, and
-sources. Profile JSON exports and imports setup—including custom feeds and the
-optional footer link—and explicit interest nodes through
-`~/Downloads/chuchua-news-profile.json`.
+dismissals, and local data counts. Its two-step reset forgets inferred weights,
+exposure, and open history while preserving explicit interests, setup choices,
+saved stories, alerts, and sources. Profile JSON exports and imports
+setup—including custom feeds and the optional footer link—and explicit interest
+nodes through `~/Downloads/chuchua-news-profile.json`.
 
 Subject alerts match all significant words locally against each newly fetched
 title and publisher-provided feed synopsis. Static publisher topics and
@@ -499,26 +504,30 @@ notifications and are de-duplicated per article. Alerts do not scan old cached
 items and never invoke AI.
 
 Read Later bookmarks are stored locally. Saved articles are exempt from the
-normal 90-day article-cache cleanup until you remove the bookmark.
+configured article-cache cleanup (90 days by default) until you remove the
+bookmark. Articles in the current Daily Edition are also retained until that
+edition is replaced.
 
 Marking a story read stores its stable article ID locally and removes it from
 the ranked feed, including after a refresh. When a card represents multiple
 publishers, its currently grouped articles are hidden and restored together as
-one Read-history card. Read stories remain searchable and
-saved copies remain in Read Later. Profile → Read lists the hidden stories and
-lets you restore them. Marking read is deliberately separate from opening a
-synopsis and does not teach the ranking profile. When it is used from an article
-page—directly or through the configurable Back action—the page closes and the
-main feed reappears.
+one Read-history card. Read stories remain searchable and saved copies remain in
+Read Later. History → Hidden (also reachable from Profile → Hidden) lists the
+hidden stories and lets you restore them. Marking read is deliberately separate
+from opening a synopsis and does not teach the ranking profile. When it is used
+from an article page outside Daily Editions or Coverage—directly or through the
+configurable Back action—the page closes and the main feed reappears. Daily
+Editions uses Done & next; Coverage returns to its timeline.
 
-Article pages keep four predictable everyday controls—AI TL;DR, Read Later,
-Open Original, and Article Actions—plus the Back button in the header. The
-transient Article Actions HUD opens with `a`, exposes visible letter commands,
-supports `j`/`k`, arrows, Enter, and Escape, and works identically by mouse.
-Its Tune screen consolidates subject/source direction and duration. The
-Back-action switch remains in Profile instead of occupying every article menu.
-When configured to mark read, Back returns to the feed immediately while the
-local read-state update completes in the background.
+Article pages keep four predictable everyday controls—AI TL;DR, Read Later, Open
+Original, and Article Actions—plus the Back button in the header. Edition
+articles additionally offer Done & next, Skip, and Pause edition. The transient
+Article Actions HUD opens with `a`, exposes visible letter commands, supports
+`j`/`k`, arrows, Enter, and Escape, and works identically by mouse. Its Tune
+screen consolidates subject/source direction and duration. The Back-action
+switch remains in Profile instead of occupying every article menu. For ordinary
+articles, when configured to mark read, Back returns to the feed immediately
+while the local read-state update completes in the background.
 
 The `?` page has separate Keys and Feed Controls tabs. Its shortcut list follows
 the physical keyboard—number row, QWERTY row, home row, bottom row, then
@@ -607,7 +616,8 @@ interests are saved together; a failed write leaves both unchanged. Older files
 without an interest graph keep existing explicit interests, while an explicitly
 empty graph clears them. Expired temporary interests are not restored. Importing
 a valid profile completes setup. Reading history, saved stories, and alerts are
-not included in the profile export.
+not included in the profile export. Neither are cached articles, current edition
+progress, event visits, or inferred learning history.
 
 Useful checks:
 
