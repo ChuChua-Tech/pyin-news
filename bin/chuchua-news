@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 
 APP_ID = "chuchua-news"
 PLUGIN_ID = "tech.chuchua.news"
-APP_VERSION = "0.24.0"
+APP_VERSION = "0.25.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import news_images
@@ -51,7 +51,7 @@ SOURCE_CATALOG_PATH = PLUGIN_DIR / "source-catalog.json"
 SUMMARY_SKILL_PATH = PLUGIN_DIR / "skills/journalistic-news-summary/SKILL.md"
 NOTIFICATION_ICON_PATH = PLUGIN_DIR / "assets/pyin-news.svg"
 AGENT_PATH = Path.home() / ".config/omarchy/defaults/agent"
-USER_AGENT = "pyin-news/0.24.0 (+https://chuchua.tech)"
+USER_AGENT = "pyin-news/0.25.0 (+https://chuchua.tech)"
 USER_AGENT_OVERRIDES = {
     # CBC's RSS gateway currently stalls requests carrying an application
     # user-agent while returning the same public XML immediately to this
@@ -185,7 +185,7 @@ TOPIC_CATALOG = [
 ]
 TOPIC_VALUES = {str(topic["value"]) for topic in TOPIC_CATALOG}
 
-SETUP_PROFILE_VERSION = 10
+SETUP_PROFILE_VERSION = 11
 PROFILE_EXPORT_FORMAT = "chuchua-news-profile"
 PROFILE_EXPORT_VERSION = 3
 MAX_CUSTOM_SOURCES = 50
@@ -2315,6 +2315,7 @@ def default_setup_profile(legacy_topics: list[str] | None = None) -> dict[str, A
             "density": "calm",
             "background": "plain",
             "article_images": False,
+            "reading_size": "regular",
             "footer_link": {"label": "", "url": ""},
         },
         "location": {"country": "", "region": "", "city": ""},
@@ -2363,6 +2364,10 @@ def normalize_setup_profile(value: Any, legacy_topics: list[str] | None = None) 
         str(appearance.get("background")) if appearance.get("background") in ("plain", "paper") else "plain"
     )
     result["appearance"]["article_images"] = appearance.get("article_images") is True
+    result["appearance"]["reading_size"] = (
+        appearance.get("reading_size") if appearance.get("reading_size")
+        in ("regular", "large", "extra-large") else "regular"
+    )
     result["appearance"]["footer_link"] = normalize_footer_link(
         appearance.get("footer_link")
     )
@@ -2656,6 +2661,16 @@ def set_system_ai_model(selection_json: str) -> dict[str, Any]:
     return save_setup_profile(json.dumps(profile, ensure_ascii=False))
 
 
+def set_reading_size(size: str) -> dict[str, Any]:
+    if size not in ("regular", "large", "extra-large"):
+        raise ValueError("reading size must be regular, large or extra-large")
+    profile = load_setup_profile()
+    if not profile["complete"]:
+        raise ValueError("finish setup before changing reading size")
+    profile["appearance"]["reading_size"] = size
+    return save_setup_profile(json.dumps(profile, ensure_ascii=False))
+
+
 def set_article_images(enabled: bool) -> dict[str, Any]:
     if type(enabled) is not bool:
         raise ValueError("article images must be on or off")
@@ -2786,6 +2801,7 @@ def validate_imported_profile(raw: Any) -> None:
         "ai.system_model": 8, "ai.system_effort": 8, "ai.context_framing": 9,
         "navigation": 4, "custom_sources": 5, "appearance.footer_link": 5,
         "appearance.background": 6, "appearance.article_images": 10,
+        "appearance.reading_size": 11,
     }
 
     def check_shape(value: Any, template: Any, field: str = "profile") -> None:
@@ -2812,6 +2828,8 @@ def validate_imported_profile(raw: Any) -> None:
     choice("appearance.density", raw["appearance"]["density"], {"calm", "compact", "classic"})
     if "background" in raw["appearance"]:
         choice("appearance.background", raw["appearance"]["background"], {"plain", "paper"})
+    if "reading_size" in raw["appearance"]:
+        choice("appearance.reading_size", raw["appearance"]["reading_size"], {"regular", "large", "extra-large"})
     choice("reading_minutes", raw["reading_minutes"], {5, 15, 30})
     choice("viewpoint.mode", raw["viewpoint"]["mode"], VIEWPOINT_BY_VALUE)
     choice("ai.mode", raw["ai"]["mode"], {"system", "local", "off"})
@@ -7397,6 +7415,8 @@ def build_parser() -> argparse.ArgumentParser:
                               help="Model and optional effort for PYIN; empty model uses agent default")
     setup_action.add_argument("--context-framing", choices=("on", "off"), default=None,
                               help="Include article context and framing in requested AI summaries")
+    setup_action.add_argument("--reading-size", choices=("regular", "large", "extra-large"), default=None,
+                              help="Set article text size independently of layout density")
     setup_action.add_argument("--article-images", choices=("on", "off"), default=None,
                               help="Show optional feed-supplied article thumbnails")
     images_parser = sub.add_parser("article-images", help="Cache thumbnails for up to four visible stories")
@@ -7548,6 +7568,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "article-images":
             return emit(article_images(args.ids_json))
         if args.command == "setup":
+            if args.reading_size is not None:
+                return emit(set_reading_size(args.reading_size))
             if args.article_images is not None:
                 return emit(set_article_images(args.article_images == "on"))
             if args.context_framing is not None:

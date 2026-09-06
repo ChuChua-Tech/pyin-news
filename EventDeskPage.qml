@@ -1,3 +1,4 @@
+import "Reading.js" as Reading
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -127,7 +128,7 @@ Item {
                   ? "New marks reporting added since your previous visit."
                   : "You're up to date with the cached coverage."))))
         textFormat: Text.PlainText
-        color: Color.muted
+        color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         wrapMode: Text.Wrap
@@ -158,7 +159,7 @@ Item {
         visible: page.coverage.ok === true && page.articles.length > 0
         text: "EARLIEST → LATEST  ·  TIMES SHOWN IN YOUR TIME ZONE"
         textFormat: Text.PlainText
-        color: Color.muted
+        color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
         wrapMode: Text.Wrap
@@ -214,7 +215,7 @@ Item {
           width: parent.width
           text: page.publicationTime(modelData.published_ts)
           textFormat: Text.PlainText
-          color: Color.muted
+          color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.Wrap
@@ -236,7 +237,7 @@ Item {
           visible: !page.compact && String(modelData.summary || "") !== ""
           text: String(modelData.summary || "")
           textFormat: Text.PlainText
-          color: Color.muted
+          color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
           wrapMode: Text.Wrap
@@ -276,7 +277,7 @@ Item {
         + "Coverage follows your sources and filters. Read reports remain for context; dismissed reports stay hidden. "
         + "This visit doesn't mark articles read."
       textFormat: Text.PlainText
-      color: Color.muted
+      color: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       wrapMode: Text.Wrap

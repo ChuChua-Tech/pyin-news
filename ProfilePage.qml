@@ -1,3 +1,4 @@
+import "Reading.js" as Reading
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -8,7 +9,7 @@ Flickable {
   property color foreground: Color.foreground
   property color background: Color.background
   property color accent: Color.accent
-  property color dim: Color.muted
+  property color dim: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
   property string fontFamily: Style.font.family
 
   property var navigationItems: ["bookmarks", "history", "alerts", "refresh"]
@@ -23,6 +24,10 @@ Flickable {
   property string aiProvider: "system"
   property string aiSummary: ""
   property bool articleImages: false
+  property string readingSize: "regular"
+  property bool readingSizeBusy: false
+  property string readingSizeMessage: ""
+  signal readingSizeRequested(string size)
   property bool articleImagesBusy: false
   signal articleImagesRequested(bool enabled)
   property bool contextFraming: false
@@ -95,6 +100,7 @@ Flickable {
   }
 
   function resetSections() {
+    readingPreferences.previewSize = page.readingSize
     page.customizeExpanded = false
     page.choicesExpanded = false
     page.learningExpanded = false
@@ -288,7 +294,7 @@ Flickable {
 
     Button {
       width: parent.width
-      text: "CUSTOMIZE  ·  MENU, FOOTER, READING & AI"
+      text: "CUSTOMIZE  ·  READING, MENU & AI"
       iconText: page.customizeExpanded ? "󰅀" : "󰅂"
       foreground: page.accent
       accent: page.accent
@@ -305,6 +311,15 @@ Flickable {
       visible: page.customizeExpanded
       width: parent.width
       spacing: Style.spacing.lg
+
+      ReadingPreferences {
+        id: readingPreferences
+        width: parent.width
+        readingSize: page.readingSize
+        busy: page.readingSizeBusy
+        message: page.readingSizeMessage
+        onSizeRequested: function(size) { page.readingSizeRequested(size) }
+      }
 
       Text {
         width: parent.width

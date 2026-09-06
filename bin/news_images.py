@@ -159,7 +159,7 @@ def download_image(url: str) -> bytes:
             connection.sock = sock
             target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             connection.request("GET", target, headers={
-                "User-Agent": "PYIN-News/0.24.0", "Accept": "image/jpeg,image/png,image/webp",
+                "User-Agent": "PYIN-News/0.25.0", "Accept": "image/jpeg,image/png,image/webp",
                 "Accept-Encoding": "identity",
             })
             response = connection.getresponse()

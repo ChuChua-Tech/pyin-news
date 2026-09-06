@@ -3,6 +3,39 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.25.0] - 2026-09-06
+
+### Added
+
+- Regular, Large and Extra large reading text in Setup and Profile → Customize,
+  with a preview before applying. Saves with the profile independently of layout
+  density; existing profiles keep Regular and toolbar controls retain their size.
+
+### Changed
+
+- Center and limit the article column in wide windows, increase reading line
+  spacing and separate AI headings from paragraphs.
+- Use the selected theme's foreground for essential secondary text when its
+  muted color has insufficient contrast against the app background.
+- Keep article actions, Coverage and edition controls in a fixed bottom toolbar,
+  reserving reading space above it and adapting to narrow windows.
+- Move the Context & framing scope notice below the article in readable small
+  print; remove the repeated shortcut row from the reading body.
+
+### Fixed
+
+- Keep the reader on the next surviving headline after hiding a story, preserving
+  the native list cursor and viewport through collapse, save and refill. Hiding
+  the last story selects the previous one; a failed save restores the original.
+- Prevent a parked mouse from pulling feed selection backward as rows scroll
+  beneath it. Keyboard navigation uses a short native scroll transition; actual
+  pointer movement still selects rows, and mouse-wheel scrolling stays native.
+- Preserve feed order when an older refresh completes after a story is hidden.
+  Replacements append at the bottom, including when stale feed requests retry.
+- Render bold text and Markdown-style headings in AI TL;DRs instead of showing
+  their markers; preserve paragraphs and keep supplied HTML inert.
+- Hide the Read Later count badge when no stories are saved.
+
 ## [0.24.0] - 2026-09-06
 
 ### Added

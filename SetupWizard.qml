@@ -1,3 +1,4 @@
+import "Reading.js" as Reading
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
@@ -16,7 +17,7 @@ FocusScope {
   property color foreground: Color.foreground
   property color background: Color.background
   property color accent: Color.accent
-  property color dim: Color.muted
+  property color dim: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
   property string fontFamily: Style.font.family
 
   property int page: 0
@@ -24,6 +25,7 @@ FocusScope {
   property string validationMessage: ""
 
   property bool articleImages: false
+  property string readingSize: "regular"
   property string density: "calm"
   property string backgroundStyle: "plain"
   property int readingMinutes: 15
@@ -219,6 +221,7 @@ FocusScope {
     var navigation = value.navigation || ({})
     wizard.existingComplete = Boolean(value.complete)
     wizard.articleImages = appearance.article_images === true
+    wizard.readingSize = String(appearance.reading_size || "regular")
     wizard.density = String(wizard.valueOr(appearance, "density", "calm"))
     wizard.backgroundStyle = String(wizard.valueOr(appearance, "background", "plain")) === "paper"
       ? "paper" : "plain"
@@ -340,12 +343,13 @@ FocusScope {
 
   function buildProfile() {
     return {
-      version: 10,
+      version: 11,
       complete: true,
       appearance: {
         theme: "omarchy",
         density: wizard.density,
         article_images: wizard.articleImages,
+        reading_size: wizard.readingSize,
         background: wizard.backgroundStyle,
         footer_link: wizard.valueOr(
           wizard.profile && wizard.profile.appearance
@@ -641,6 +645,13 @@ FocusScope {
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.Wrap
           }
+        }
+
+        ReadingPreferences {
+          width: parent.width
+          readingSize: wizard.readingSize
+          staged: true
+          onSizeRequested: function(size) { wizard.readingSize = size }
         }
 
         Toggle {

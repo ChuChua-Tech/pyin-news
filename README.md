@@ -148,6 +148,7 @@ being assembled, then settles on `PYIN` as the edition appears.
 First launch opens an eight-page, re-runnable wizard. It configures:
 
 - a main feed size of 15, 30, or 60 stories and Calm, Compact, or Classic layout
+- Regular, Large, or Extra large article text, with a live preview
 - optional country, region, and city boosts, stored locally
 - language, must-see, interested, and muted topics
 - a 50-entry keyword blacklist that hard-filters the feed and alert notifications
@@ -166,6 +167,13 @@ and type. The density choice changes layout without creating a competing theme.
 Calm uses roomy story rows with subtle inset separators; Compact keeps the
 separators and fits more stories on screen. Classic keeps the original roomy
 layout without separator lines. All three choices follow profile export/import.
+Reading text size is independent of density: choose Regular, Large, or Extra large
+in Setup or Profile → Customize. Profile previews the choice before **Apply text
+size** saves it. Article text, headlines and the framing notice scale together;
+toolbar controls retain their size. The preference follows profile export/import,
+and older profiles start at Regular. Articles use more generous line spacing and
+a centered, limited-width column in wide windows. Essential secondary text uses
+the theme's foreground when its muted color is too faint against the app surface.
 Background is a separate Plain/Paper choice on the first setup page, with a live
 preview. Plain is the default. Paper adds a faint, static grain tinted by the
 active Omarchy palette; article-reading and AI-result views keep a plain surface.
@@ -182,12 +190,18 @@ universal categories.
 Enable **Show article images** in Setup's appearance page or
 **Profile → Customize**. It defaults to off and follows profile export/import.
 Small thumbnails appear beside headlines in the feed, search and Daily Editions.
-When reading a story, its image is centered below the headline and source, above
-the reading controls. It uses the same cache, preserves the whole picture and
+When reading a story, its image is centered below the headline and source. It
+uses the same cache, preserves the whole picture and
 adapts to narrow windows; Compact uses a shorter frame. The first Down/j or
 downward scroll folds a visible image away to free reading space. Up/k or
 upward scrolling unfolds it; images above your current position return as you
 scroll back toward the headline. New stories start with the image expanded.
+Article controls stay in a fixed toolbar at the bottom of the reader, with space
+reserved above it so the last lines remain readable. Coverage is available there
+too; Daily Edition controls stay fixed while reading an edition. Narrow windows
+wrap the toolbar into compact rows. Keyboard shortcuts remain available.
+AI results render bold emphasis and heading markers; publisher synopses retain
+their original plain text. The Read Later badge appears only when stories are saved.
 Calm and Classic use an 88 × 66 thumbnail; Compact uses 64 × 48 (scaled with the
 shell). Classic keeps its separator-free layout. Missing or unusable images
 leave text-only rows, and photographs retain their original colors.
@@ -332,6 +346,10 @@ catalog search, ranking system, source catalog, bookmarks, and alerts available.
 
 ## Responsive article actions
 
+Feed keyboard navigation scrolls with a short native transition. A parked mouse
+does not change selection as rows pass beneath it; moving the pointer deliberately
+still selects a headline. Wheel scrolling keeps the native scrolling behavior.
+
 In the ordinary feed, Mark Read and Dismiss remove the selected story and every
 visible member of its event cluster from the panel immediately, then persist the
 change in the background. Feed calculations carry a mutation generation, so a
@@ -344,11 +362,15 @@ replacing its ranking. Every surviving headline keeps its relative position, the
 reader's selected story and scroll offset stay anchored, and replacement stories
 arrive at the bottom. The dismissed card now fades and collapses first, visibly
 carrying the existing cards below it upward instead of swapping the row's
-contents in place; the status line confirms how many replacement cards were
-appended. Automatic source checks merge without disturbing the active session.
+contents in place. Selection continues to the next surviving story, or the
+previous story when hiding the last one, without resetting the list to the top.
+The status line confirms how many replacement cards were appended. Automatic
+source checks merge without disturbing the active session.
 Pressing `r`, changing curation controls, or reopening the panel intentionally
-starts a newly ranked session. Daily Editions keeps its fixed selection and
-saved progress throughout; these replenishment rules apply to the ordinary feed.
+starts a newly ranked session. If a story is hidden while a refresh is pending,
+that older refresh preserves the current order and appends replacements too.
+Daily Editions keeps its fixed selection and saved progress throughout; these
+replenishment rules apply to the ordinary feed.
 
 Session-preserving order is also the internal default: every asynchronous feed
 load must opt in explicitly before it may replace the visible ranking. Each load
@@ -411,8 +433,8 @@ reporter's wording, and acknowledge when no specific concern is supported.
 This uses the supplied article excerpt only. It does not browse for original
 transcripts or verify other sources, rate an outlet's bias, or guarantee that
 the AI identifies every issue correctly. A short quotation alone is not evidence
-that it was taken out of context. The result displays a reminder that original
-quote context has not been independently checked.
+that it was taken out of context. A small-print notice at the end of the result
+reminds you that original quote context has not been independently checked.
 
 The option uses the existing summary request, with a slightly longer answer;
 there is no second AI call. Changing it affects the next requested summary and

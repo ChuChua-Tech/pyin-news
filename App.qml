@@ -1,3 +1,4 @@
+import "Reading.js" as Reading
 import QtQuick
 import QtQuick.Window
 import Quickshell
@@ -24,7 +25,7 @@ Item {
   readonly property color foreground: Color.foreground
   readonly property color background: Color.background
   readonly property color accent: Color.accent
-  readonly property color dim: Color.muted
+  readonly property color dim: Reading.secondaryColor(Color.foreground, Color.background, Color.muted)
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -36,6 +37,12 @@ Item {
   readonly property int maxArticles: Math.max(10, Math.min(100,
     parseInt(setting("maxArticles", 30), 10) || 30))
   readonly property string interests: String(setting("interests", "") || "")
+  property bool readingSizeSaving: false
+  property int readingSizeRevision: 0
+  property string readingSizeRequested: ""
+  property string readingSizeMessage: ""
+  readonly property string readingSize: String(root.setupAppearance.reading_size || "regular")
+  readonly property int readingTextSize: Math.round(Style.font.body * Reading.sizeScale(root.readingSize))
   property bool articleImagesSaving: false
   property int articleImagesRevision: 0
   readonly property bool articleImages: root.setupAppearance.article_images === true
@@ -159,6 +166,10 @@ Item {
   property bool readingClockRunning: false
   property bool readingEngagementRecorded: false
   property int selectedIndex: 0
+  property bool feedLayoutChanging: false
+  property bool feedPointerKnown: false
+  property real feedPointerX: 0
+  property real feedPointerY: 0
   property int savedIndex: 0
   property int historyIndex: 0
   property int readIndex: 0
@@ -218,6 +229,7 @@ Item {
   property var lastFeedBeforeIds: []
   property var lastFeedAfterIds: []
   property bool activeRefreshOrderPreservation: false
+  property int activeRefreshLoadRevision: 0
   property int stableFeedAppendCount: 0
   property int feedMutationRevision: 0
   property int activeFeedLoadRevision: 0
@@ -517,7 +529,7 @@ Item {
   }
 
   function saveSetup(profile) {
-    if (root.articleImagesSaving || setupSaveProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || setupSaveProc.running) return
     root.statusText = "Saving your curation choices…"
     setupSaveProc.command = [root.backendPath, "setup", "--save-json", JSON.stringify(profile)]
     setupSaveProc.running = true
@@ -534,7 +546,7 @@ Item {
   }
 
   function exportProfile() {
-    if (root.articleImagesSaving || profileTransferProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || profileTransferProc.running) return
     root.profileTransferAction = "export"
     profileTransferProc.command = [
       root.backendPath, "setup", "--export",
@@ -545,7 +557,7 @@ Item {
   }
 
   function importProfile() {
-    if (root.articleImagesSaving || profileTransferProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || profileTransferProc.running) return
     root.profileTransferAction = "import"
     profileTransferProc.command = [
       root.backendPath, "setup", "--import",
@@ -571,6 +583,7 @@ Item {
     if (refreshProc.running) return
     var isBackground = background === true
     root.activeRefreshOrderPreservation = isBackground
+    root.activeRefreshLoadRevision = root.feedMutationRevision
     root.refreshOutcomeText = ""
     root.refreshOutcomeDetail = ""
     root.refreshScanFrame = 0
@@ -587,7 +600,7 @@ Item {
   function loadFeed(preserveOrder, reason) {
     // Session stability is the safe default. A caller must explicitly pass
     // false to gain permission to replace the visible ranking.
-    var keepOrder = preserveOrder !== false
+    var keepOrder = preserveOrder !== false || root.readMutationActive
     var loadReason = String(reason || (keepOrder ? "session-update" : "explicit-rerank"))
     if (loadProc.running) {
       root.pendingLoad = true
@@ -625,6 +638,7 @@ Item {
     return JSON.stringify({
       context_framing: root.contextFraming,
       article_images: root.articleImages,
+      reading_size: root.readingSize,
       reading_image_ready: readingImage.imageReady,
       reading_image_folded: root.readingImageFolded,
       reason: root.lastFeedApplyReason,
@@ -716,7 +730,7 @@ Item {
       beforeIds.push(String(root.articles[beforeIndex].id))
     var selectedId = keepOrder && root.selectedArticle
       ? String(root.selectedArticle.id) : ""
-    var previousContentY = keepOrder ? headlineList.contentY : 0
+    var previousContentY = keepOrder ? root.holdHeadlineViewport() : 0
     var incoming = root.withoutOptimisticHidden(payload.articles || [])
     if (!keepOrder) root.stableFeedAppendCount = 0
     root.articles = keepOrder
@@ -762,13 +776,34 @@ Item {
       + (root.feedStats.last_refresh_age || "never") + " ago"
     if (!readMutationProc.running && !dismissProc.running)
       root.optimisticHiddenIds = ({})
+    if (keepOrder) root.restoreHeadlineViewport(previousContentY)
     Qt.callLater(function() {
-      if (keepOrder) {
-        headlineList.contentY = Math.max(0, Math.min(previousContentY,
-          Math.max(0, headlineList.contentHeight - headlineList.height)))
-      }
       impressionTimer.restart()
     })
+  }
+
+  function holdHeadlineViewport() {
+    root.feedLayoutChanging = true
+    return headlineList.contentY
+  }
+
+  function restoreHeadlineViewport(position) {
+    // Replacing a JavaScript model resets ListView.currentIndex to zero, even
+    // when selectedIndex did not change. Restore the binding and viewport in
+    // the same layout turn, before native cursor following is enabled again.
+    headlineList.forceLayout()
+    headlineList.currentIndex = Qt.binding(function() { return root.selectedIndex })
+    headlineList.contentY = Math.max(headlineList.originY, Math.min(position,
+      headlineList.originY + Math.max(0, headlineList.contentHeight - headlineList.height)))
+    root.feedLayoutChanging = false
+  }
+
+  function selectionAfterHide(values, ids, index) {
+    for (var next = index; next < values.length; next++)
+      if (ids.indexOf(String(values[next].id)) === -1) return String(values[next].id)
+    for (var previous = Math.min(index - 1, values.length - 1); previous >= 0; previous--)
+      if (ids.indexOf(String(values[previous].id)) === -1) return String(values[previous].id)
+    return ""
   }
 
   function moveCursor(delta) {
@@ -778,7 +813,21 @@ Item {
     root.selectedIndex = Math.max(0,
       Math.min(root.visibleArticles.length - 1, root.selectedIndex + delta))
     root.feedbackTargetIndex = 0
-    headlineList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+  }
+
+  function pointAtHeadline(index, x, y) {
+    // Row-local coordinates change when the list scrolls under a parked mouse.
+    // Only real pointer movement in window coordinates should change selection.
+    var moved = !root.feedPointerKnown
+      || Math.abs(x - root.feedPointerX) > 1 || Math.abs(y - root.feedPointerY) > 1
+    if (!moved) return
+    root.feedPointerKnown = true
+    root.feedPointerX = x
+    root.feedPointerY = y
+    if (root.feedLayoutChanging || headlineList.moving || index < 0
+        || index >= root.visibleArticles.length) return
+    root.cursorActive = true
+    root.selectedIndex = index
   }
 
   function queueVisibleImpressions() {
@@ -1426,6 +1475,19 @@ Item {
     }
   }
 
+  function formatAiReadingText(value) {
+    // Only generate our own bold and line-break tags. Model output must never
+    // become image/HTML markup or initiate requests while formatting a summary.
+    return String(value || "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+      .replace(/^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?$/gm, "<b>$1</b>")
+      .replace(/^(<b>[^\n]+<\/b>)$/gm, "\n$1\n")
+      .replace(/\n{3,}/g, "\n\n").trim()
+      .replace(/\n/g, "<br>")
+  }
+
   function openArticle() {
     var article = root.viewMode === "result"
       ? root.activeArticle
@@ -1650,6 +1712,7 @@ Item {
   }
 
   function showProfile() {
+    root.readingSizeMessage = ""
     root.confirmProfileReset = false
     root.viewMode = "profile"
     profilePage.resetSections()
@@ -1659,7 +1722,7 @@ Item {
   }
 
   function setNavigationItemEnabled(item, enabled) {
-    if (root.articleImagesSaving || navigationProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || navigationProc.running) return
     var key = String(item)
     var next = []
     for (var i = 0; i < root.navigationItems.length; i++) {
@@ -1675,7 +1738,7 @@ Item {
   }
 
   function setFooterLink(label, url) {
-    if (root.articleImagesSaving || footerLinkProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || footerLinkProc.running) return
     var requested = {
       label: String(label || "").trim(),
       url: String(url || "").trim()
@@ -1945,7 +2008,7 @@ Item {
   }
 
   function setArticleBackMarksRead(enabled) {
-    if (root.articleImagesSaving || behaviorProc.running) return
+    if (root.readingSizeSaving || root.articleImagesSaving || behaviorProc.running) return
     behaviorProc.command = [
       root.backendPath, "setup", "--back-action", enabled ? "mark-read" : "keep"
     ]
@@ -1954,15 +2017,40 @@ Item {
   }
 
   function setSystemAiModel(model, effort) {
-    if (root.articleImagesSaving || root.contextFramingSaving || systemAiPresetProc.running || (model === root.systemAiModel && effort === root.systemAiEffort)) return
+    if (root.readingSizeSaving || root.articleImagesSaving || root.contextFramingSaving || systemAiPresetProc.running || (model === root.systemAiModel && effort === root.systemAiEffort)) return
     systemAiPresetProc.command = [root.backendPath, "setup", "--system-ai-model-json",
       JSON.stringify({model: String(model), effort: String(effort)})]
     systemAiPresetProc.running = true
     root.statusText = "Saving PYIN's model choice…"
   }
 
+  function setReadingSize(size) {
+    if (["regular", "large", "extra-large"].indexOf(size) === -1
+        || size === root.readingSize || root.readingSizeSaving || root.articleImagesSaving
+        || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running
+        || navigationProc.running || footerLinkProc.running || behaviorProc.running
+        || setupSaveProc.running || profileTransferProc.running) return
+    root.readingSizeSaving = true
+    root.readingSizeRequested = size
+    root.readingSizeRevision++
+    root.readingSizeMessage = "Saving reading size…"
+    readingSizeProc.command = [root.backendPath, "setup", "--reading-size", size]
+    readingSizeProc.running = true
+    root.scheduleReadingSizeCheck()
+  }
+
+  function scheduleReadingSizeCheck() {
+    var revision = root.readingSizeRevision
+    Qt.callLater(function() {
+      if (root.readingSizeSaving && revision === root.readingSizeRevision && !readingSizeProc.running) {
+        root.readingSizeSaving = false
+        root.readingSizeMessage = "Could not save reading size. Please try again."
+      }
+    })
+  }
+
   function setArticleImages(enabled) {
-    if (root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running
+    if (root.readingSizeSaving || root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running
         || navigationProc.running || footerLinkProc.running || behaviorProc.running
         || setupSaveProc.running || profileTransferProc.running) return
     root.articleImagesSaving = true
@@ -1984,7 +2072,7 @@ Item {
   }
 
   function setContextFraming(enabled) {
-    if (root.contextFramingSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
+    if (root.contextFramingSaving || root.readingSizeSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
         || setupSaveProc.running || profileTransferProc.running) return
     root.contextFramingSaving = true
     root.contextFramingRevision++
@@ -2243,16 +2331,18 @@ Item {
   function finishVisualHide() {
     var ids = root.visualHideIds || []
     if (ids.length === 0) return
+    var position = root.holdHeadlineViewport()
+    var selectedId = root.selectionAfterHide(root.visibleArticles, ids, root.selectedIndex)
     root.articles = root.articlesWithoutIds(root.articles, ids)
     if (root.visualHideFromSearch)
       root.searchResults = root.articlesWithoutIds(root.searchResults, ids)
-    root.selectedIndex = Math.max(0,
-      Math.min(root.selectedIndex, root.visibleArticles.length - 1))
+    root.selectedIndex = Math.max(0, root.articleIndexById(root.visibleArticles, selectedId))
     if (root.viewMode === "result" && root.activeArticle
         && ids.indexOf(String(root.activeArticle.id)) !== -1)
       root.closeHiddenArticle()
     root.visualHideIds = []
     root.visualHideFromSearch = false
+    root.restoreHeadlineViewport(position)
 
     if (root.deferredReadMutationPayload !== null) {
       var payload = root.deferredReadMutationPayload
@@ -2278,7 +2368,8 @@ Item {
       ids: ids,
       articles: root.articles,
       searchResults: root.searchResults,
-      selectedIndex: root.selectedIndex
+      selectedIndex: root.selectedIndex,
+      contentY: headlineList.contentY
     }
     root.feedMutationRevision++
     root.addOptimisticHidden(ids)
@@ -2295,6 +2386,7 @@ Item {
 
   function rollbackOptimisticHide(context) {
     if (!context || !context.ids || context.ids.length === 0) return
+    root.holdHeadlineViewport()
     hideCollapseTimer.stop()
     root.visualHideIds = []
     root.visualHideFromSearch = false
@@ -2306,6 +2398,7 @@ Item {
     root.searchResults = context.searchResults || root.searchResults
     root.selectedIndex = Math.max(0,
       Math.min(Number(context.selectedIndex || 0), root.visibleArticles.length - 1))
+    root.restoreHeadlineViewport(Number(context.contentY || 0))
     root.loadFeed(true, "mutation-rollback")
   }
 
@@ -2390,6 +2483,7 @@ Item {
   }
 
   function applyReadMutation(payload, showLess) {
+    var position = root.holdHeadlineViewport()
     root.readMutationActive = false
     // Persistence is complete. Advance the generation again so every feed
     // calculation started before or during the write is now stale.
@@ -2459,6 +2553,7 @@ Item {
     }
     if (showLess) root.dismissMutationContext = ({})
     else root.readMutationContext = ({})
+    root.restoreHeadlineViewport(position)
     // Refill to the configured story count without moving the surviving
     // headlines the reader is already scanning.
     root.loadFeed(true, showLess ? "dismiss-refill" : "read-refill")
@@ -2817,6 +2912,29 @@ Item {
   }
 
   Process {
+    id: readingSizeProc
+    stdout: StdioCollector { id: readingSizeStdout; waitForEnd: true }
+    stderr: StdioCollector { id: readingSizeStderr; waitForEnd: true }
+    onRunningChanged: {
+      if (!running) root.scheduleReadingSizeCheck()
+    }
+    onExited: function(exitCode, exitStatus) {
+      root.readingSizeSaving = false
+      root.readingSizeRevision++
+      var payload = root.parsePayload(readingSizeStdout.text, "Could not save reading size")
+      if (exitCode !== 0 || Boolean(exitStatus) || !payload || !payload.ok
+          || !payload.profile || !payload.profile.appearance
+          || payload.profile.appearance.reading_size !== root.readingSizeRequested) {
+        root.readingSizeMessage = String(payload && payload.error || "Could not save reading size. Please try again.")
+        return
+      }
+      root.setupData = payload
+      root.setupRevision++
+      root.readingSizeMessage = "Reading size saved."
+    }
+  }
+
+  Process {
     id: articleImagesProc
     stdout: StdioCollector { id: articleImagesStdout; waitForEnd: true }
     stderr: StdioCollector { id: articleImagesStderr; waitForEnd: true }
@@ -2981,8 +3099,13 @@ Item {
       refreshOutcomeTimer.restart()
       // Alert refreshes continue while PYIN is hidden, but ranking and QML
       // model rebuilding are only useful while the panel is actually open.
-      if (root.opened) root.loadFeed(root.activeRefreshOrderPreservation,
-        root.activeRefreshOrderPreservation ? "background-refresh" : "manual-refresh")
+      // A refresh started before a hide must not become a late rerank after
+      // the hide's refill. The user's newer reading actions take precedence.
+      var preserveOrder = root.activeRefreshOrderPreservation || root.readMutationActive
+        || root.activeRefreshLoadRevision !== root.feedMutationRevision
+      if (root.opened) root.loadFeed(preserveOrder,
+        root.activeRefreshOrderPreservation ? "background-refresh"
+          : (preserveOrder ? "refresh-after-mutation" : "manual-refresh"))
       root.activeRefreshOrderPreservation = false
     }
   }
@@ -2997,7 +3120,9 @@ Item {
           root.activeFeedLoadReason)
       else {
         if (!root.pendingLoad) {
-          root.pendingFeedOrderPreservation = root.activeFeedOrderPreservation
+          // Retry stale calculations as a session update. Their original
+          // permission to rerank predates the action that invalidated them.
+          root.pendingFeedOrderPreservation = true
           root.pendingFeedLoadReason = root.activeFeedLoadReason + "-stale"
         }
         root.pendingLoad = true
@@ -3818,6 +3943,8 @@ Item {
                 }
 
                 Rectangle {
+                  objectName: "pyinReadLaterBadge"
+                  visible: root.bookmarkCount > 0
                   anchors.top: parent.top
                   anchors.right: parent.right
                   anchors.topMargin: Style.space(1)
@@ -4072,6 +4199,7 @@ Item {
 
           ListView {
             id: headlineList
+            objectName: "pyinHeadlineList"
             anchors.fill: parent
             visible: (root.viewMode === "feed" || root.viewMode === "search")
               && root.visibleArticles.length > 0
@@ -4079,6 +4207,10 @@ Item {
             spacing: Style.spacing.sm
             model: root.visibleArticles
             currentIndex: root.selectedIndex
+            highlightFollowsCurrentItem: !root.feedLayoutChanging
+            keyNavigationEnabled: false
+            highlightMoveDuration: 140
+            highlightMoveVelocity: -1
             boundsBehavior: Flickable.StopAtBounds
             onContentYChanged: root.queueVisibleImpressions()
             onContentHeightChanged: root.queueVisibleImpressions()
@@ -4221,14 +4353,17 @@ Item {
               }
 
               MouseArea {
+                id: headlineMouse
                 anchors.fill: parent
                 hoverEnabled: true
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                 cursorShape: Qt.PointingHandCursor
-                onEntered: {
-                  root.cursorActive = true
-                  root.selectedIndex = index
+                function pointAtRow() {
+                  var point = headlineMouse.mapToItem(windowContent, mouseX, mouseY)
+                  root.pointAtHeadline(index, point.x, point.y)
                 }
+                onEntered: pointAtRow()
+                onPositionChanged: pointAtRow()
                 onClicked: function(mouse) {
                   root.selectedIndex = index
                   if (mouse.button === Qt.RightButton) root.summarizeSelected()
@@ -4341,7 +4476,11 @@ Item {
           Flickable {
             id: resultScroll
             objectName: "pyinResultScroll"
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: readerDock.top
+            anchors.bottomMargin: Style.spacing.md
             visible: root.viewMode === "result"
             clip: true
             contentWidth: width
@@ -4370,7 +4509,8 @@ Item {
 
             Column {
               id: resultColumn
-              width: resultScroll.width
+              width: Math.min(resultScroll.width, root.readingTextSize * 40)
+              anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.spacing.panelGap
 
               Text {
@@ -4379,51 +4519,21 @@ Item {
                 text: root.resultTitle
                 color: root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
+                font.pixelSize: Math.max(Style.font.heading, Math.round(root.readingTextSize * 1.25))
                 font.bold: true
                 wrapMode: Text.Wrap
               }
 
-              Item {
-                id: resultSourceRow
+              Text {
                 width: parent.width
-                visible: root.resultProvider !== "" || resultCoverageButton.visible
-                height: Math.max(resultProviderText.implicitHeight,
-                  resultCoverageButton.visible ? resultCoverageButton.implicitHeight : 0)
-
-                Text {
-                  id: resultProviderText
-                  anchors.left: parent.left
-                  anchors.right: resultCoverageButton.visible ? resultCoverageButton.left : parent.right
-                  anchors.rightMargin: resultCoverageButton.visible ? Style.spacing.md : 0
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: root.resultProvider
-                  wrapMode: Text.Wrap
-                  color: root.accent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 0.7
-                }
-
-                Button {
-                  id: resultCoverageButton
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  visible: root.activeArticle !== null
-                  text: "Coverage"
-                  tooltipText: root.eventArticleOpen
-                    ? "Back to coverage · E" : "More reporting on this story · E"
-                  foreground: root.accent
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.caption
-                  horizontalPadding: Style.spacing.sm
-                  verticalPadding: Style.spacing.xs
-                  focusable: true
-                  enabled: !root.aiBusy
-                  onClicked: root.showEventDesk()
-                }
+                visible: root.resultProvider !== ""
+                textFormat: Text.PlainText
+                text: root.resultProvider
+                wrapMode: Text.Wrap
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 0.7
               }
 
               Item {
@@ -4469,121 +4579,6 @@ Item {
                 height: Style.spacing.hairline
                 color: root.foreground
                 opacity: 0.12
-              }
-
-              Text {
-                width: parent.width
-                visible: root.resultKind === "ai" && root.resultContextFraming
-                textFormat: Text.PlainText
-                text: "Context & framing uses the supplied article only. Original quote context is not independently checked. AI may miss or misinterpret context."
-                wrapMode: Text.Wrap
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Row {
-                id: resultActionBar
-                width: parent.width
-                spacing: Style.spacing.md
-                property int visibleCount: resultSummaryButton.visible ? 4 : 3
-                property real buttonWidth: (width - spacing * (visibleCount - 1))
-                  / visibleCount
-
-                Button {
-                  id: resultSummaryButton
-                  visible: root.aiEnabled && root.activeArticleId !== ""
-                  width: visible ? resultActionBar.buttonWidth : 0
-                  text: root.aiBusy
-                    ? (root.aiHasOutput ? "Streaming…" : "Preparing…")
-                    : (root.resultKind === "ai" ? "Synopsis" : "AI TL;DR")
-                  iconText: root.aiBusy ? "󰦖"
-                    : (root.resultKind === "ai" ? "󰓰" : "󰚩")
-                  iconSpinning: root.aiBusy
-                  tooltipText: root.aiBusy
-                    ? "The source-bound answer is arriving live"
-                    : (root.resultKind === "ai"
-                    ? "Return to the feed-provided synopsis"
-                    : "Create a source-bounded summary with " + root.aiLabel + " · S")
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  focusable: true
-                  bordered: true
-                  selected: root.resultKind === "ai" && !root.aiBusy
-                  enabled: !root.aiBusy
-                  onClicked: {
-                    root.closeActionHud()
-                    if (root.resultKind === "ai") root.showArticle(root.activeArticle)
-                    else root.summarizeArticle(root.activeArticle)
-                  }
-                }
-
-                Button {
-                  width: resultActionBar.buttonWidth
-                  text: root.activeArticle && Boolean(root.activeArticle.bookmarked)
-                    ? "Saved" : "Save"
-                  iconText: bookmarkMutationProc.running ? "󰦖"
-                    : (root.activeArticle && Boolean(root.activeArticle.bookmarked)
-                      ? "󰆴" : "󰃀")
-                  iconSpinning: bookmarkMutationProc.running
-                  tooltipText: root.activeArticle && Boolean(root.activeArticle.bookmarked)
-                    ? "Remove from Read Later · M" : "Save to Read Later · M"
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  focusable: true
-                  bordered: true
-                  enabled: root.activeArticle !== null && !bookmarkMutationProc.running
-                  onClicked: root.toggleBookmark(root.activeArticle)
-                }
-
-                Button {
-                  width: resultActionBar.buttonWidth
-                  text: "Original"
-                  iconText: "󰏌"
-                  tooltipText: "Open the publisher's original article · O"
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  focusable: true
-                  bordered: true
-                  enabled: root.resultUrl !== ""
-                  onClicked: root.openArticle()
-                }
-
-                Button {
-                  id: resultActionsButton
-                  width: resultActionBar.buttonWidth
-                  text: "Actions"
-                  iconText: "󰍜"
-                  tooltipText: "Article Actions HUD · A"
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontFamily: root.fontFamily
-                  focusable: true
-                  bordered: true
-                  selected: root.actionHudExpanded
-                  enabled: root.activeArticle !== null && !root.aiBusy
-                  onClicked: {
-                    if (root.actionHudExpanded) root.closeActionHud()
-                    else root.openActionHud(root.activeArticle)
-                  }
-                }
-              }
-
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                horizontalAlignment: Text.AlignHCenter
-                text: root.aiEnabled
-                  ? "S/T  TL;DR   ·   M  save   ·   O  original   ·   A  actions"
-                  : "M  save   ·   O  original   ·   A  actions"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                opacity: 0.8
-                wrapMode: Text.Wrap
               }
 
               Item {
@@ -4716,16 +4711,19 @@ Item {
               }
 
               Text {
+                objectName: "pyinArticleText"
                 width: parent.width
                 visible: root.resultKind !== "ai" || root.aiHasOutput
-                textFormat: Text.PlainText
-                text: root.resultText
-                  + (root.resultKind === "ai" && root.aiBusy && root.aiHasOutput
-                    ? (root.aiCursorVisible ? "█" : " ") : "")
+                textFormat: root.resultKind === "ai" ? Text.StyledText : Text.PlainText
+                text: root.resultKind === "ai"
+                  ? root.formatAiReadingText(root.resultText
+                    + (root.aiBusy && root.aiHasOutput
+                      ? (root.aiCursorVisible ? "█" : " ") : ""))
+                  : root.resultText
                 color: root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                lineHeight: 1.35
+                font.pixelSize: root.readingTextSize
+                lineHeight: 1.5
                 wrapMode: Text.Wrap
                 opacity: visible ? 1 : 0
 
@@ -4734,72 +4732,25 @@ Item {
                 }
               }
 
+              Text {
+                objectName: "pyinContextFramingNotice"
+                width: parent.width
+                visible: root.resultKind === "ai" && root.resultContextFraming
+                textFormat: Text.PlainText
+                text: "Context & framing uses the supplied article only. Original quote context is not independently checked. AI may miss or misinterpret context."
+                wrapMode: Text.Wrap
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Math.max(Style.font.caption, Math.round(root.readingTextSize * 0.85))
+                lineHeight: 1.45
+              }
+
               Rectangle {
                 width: parent.width
                 height: Style.spacing.hairline
                 visible: root.activeArticle !== null
                 color: root.foreground
                 opacity: 0.08
-              }
-
-              Column {
-                width: parent.width
-                visible: root.editionReaderActive()
-                spacing: Style.spacing.md
-                Text {
-                  width: parent.width
-                  text: root.editionData ? String(root.editionData.completed) + " of "
-                    + String(root.editionData.total) + " complete · Your edition stays fixed" : ""
-                  color: root.accent
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.Wrap
-                }
-                Flow {
-                  width: parent.width
-                  spacing: Style.spacing.sm
-                  Button {
-                    text: root.editionData && root.editionData.remaining > 1 ? "Done & next" : "Finish edition"
-                    tooltipText: "Mark read and continue · D"
-                    foreground: root.foreground
-                    accent: root.accent
-                    fontFamily: root.fontFamily
-                    bordered: true
-                    focusable: true
-                    enabled: !root.editionRequestActive && !root.aiBusy
-                      && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
-                    onClicked: root.completeEditionStory("done")
-                  }
-                  Button {
-                    text: "Skip"
-                    tooltipText: "Move on without hiding this story or teaching Show Less"
-                    foreground: root.dim
-                    accent: root.accent
-                    fontFamily: root.fontFamily
-                    focusable: true
-                    enabled: !root.editionRequestActive && !root.aiBusy
-                      && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
-                    onClicked: root.completeEditionStory("skip")
-                  }
-                  Button {
-                    text: "Pause edition"
-                    foreground: root.dim
-                    accent: root.accent
-                    fontFamily: root.fontFamily
-                    focusable: true
-                    onClicked: root.navigateBack()
-                  }
-                }
-                Text {
-                  width: parent.width
-                  visible: root.editionError !== ""
-                  text: root.editionError
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.Wrap
-                }
               }
 
               Button {
@@ -4833,6 +4784,207 @@ Item {
                 wrapMode: Text.Wrap
               }
             }
+          }
+
+          Column {
+            id: readerDock
+            objectName: "pyinReaderDock"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            visible: root.viewMode === "result"
+            spacing: Style.spacing.sm
+
+            Rectangle {
+              width: parent.width
+              height: Style.spacing.hairline
+              color: root.foreground
+              opacity: 0.16
+            }
+
+            Flow {
+              id: resultActionBar
+              objectName: "pyinReaderActions"
+              width: parent.width
+              spacing: Style.spacing.md
+              property int visibleCount: (resultSummaryButton.visible ? 1 : 0)
+                + 3 + (resultCoverageButton.visible ? 1 : 0)
+              readonly property int maxColumns: Math.max(1,
+                Math.floor((width + spacing) / (Style.space(96) + spacing)))
+              readonly property int columns: Math.ceil(visibleCount
+                / Math.ceil(visibleCount / maxColumns))
+              property real buttonWidth: (width - spacing * (columns - 1))
+                / columns
+
+              Button {
+                id: resultSummaryButton
+                visible: root.aiEnabled && root.activeArticleId !== ""
+                width: visible ? resultActionBar.buttonWidth : 0
+                text: root.aiBusy
+                  ? (root.aiHasOutput ? "Streaming…" : "Preparing…")
+                  : (root.resultKind === "ai" ? "Synopsis" : "AI TL;DR")
+                iconText: root.aiBusy ? "󰦖" : ""
+                iconSpinning: root.aiBusy
+                tooltipText: root.aiBusy
+                  ? "The source-bound answer is arriving live"
+                  : (root.resultKind === "ai"
+                  ? "Return to the feed-provided synopsis"
+                  : "Create a source-bounded summary with " + root.aiLabel + " · S")
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.spacing.xs
+                focusable: true
+                bordered: true
+                selected: root.resultKind === "ai" && !root.aiBusy
+                enabled: !root.aiBusy
+                onClicked: {
+                  root.closeActionHud()
+                  if (root.resultKind === "ai") root.showArticle(root.activeArticle)
+                  else root.summarizeArticle(root.activeArticle)
+                }
+              }
+
+              Button {
+                width: resultActionBar.buttonWidth
+                text: root.activeArticle && Boolean(root.activeArticle.bookmarked)
+                  ? "Saved" : "Save"
+                iconText: bookmarkMutationProc.running ? "󰦖" : ""
+                iconSpinning: bookmarkMutationProc.running
+                tooltipText: root.activeArticle && Boolean(root.activeArticle.bookmarked)
+                  ? "Remove from Read Later · M" : "Save to Read Later · M"
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.spacing.xs
+                focusable: true
+                bordered: true
+                enabled: root.activeArticle !== null && !bookmarkMutationProc.running
+                onClicked: root.toggleBookmark(root.activeArticle)
+              }
+
+              Button {
+                width: resultActionBar.buttonWidth
+                text: "Original"
+                tooltipText: "Open the publisher's original article · O"
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.spacing.xs
+                focusable: true
+                bordered: true
+                enabled: root.resultUrl !== ""
+                onClicked: root.openArticle()
+              }
+
+              Button {
+                id: resultActionsButton
+                width: resultActionBar.buttonWidth
+                text: "Actions"
+                tooltipText: "Article Actions HUD · A"
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.spacing.xs
+                focusable: true
+                bordered: true
+                selected: root.actionHudExpanded
+                enabled: root.activeArticle !== null && !root.aiBusy
+                onClicked: {
+                  if (root.actionHudExpanded) root.closeActionHud()
+                  else root.openActionHud(root.activeArticle)
+                }
+              }
+              Button {
+                id: resultCoverageButton
+                width: resultActionBar.buttonWidth
+                visible: root.activeArticle !== null
+                text: "Coverage"
+                tooltipText: root.eventArticleOpen
+                  ? "Back to coverage · E" : "More reporting on this story · E"
+                foreground: root.accent
+                accent: root.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.caption
+                bordered: true
+                horizontalPadding: Style.spacing.xs
+                focusable: true
+                enabled: !root.aiBusy
+                onClicked: root.showEventDesk()
+              }
+            }
+
+            Column {
+              objectName: "pyinEditionControls"
+              width: parent.width
+              visible: root.editionReaderActive()
+              spacing: Style.spacing.md
+              Text {
+                width: parent.width
+                text: root.editionData ? String(root.editionData.completed) + " of "
+                  + String(root.editionData.total) + " complete · Your edition stays fixed" : ""
+                color: root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
+              }
+              Flow {
+                width: parent.width
+                spacing: Style.spacing.sm
+                Button {
+                  text: root.editionData && root.editionData.remaining > 1 ? "Done & next" : "Finish edition"
+                  tooltipText: "Mark read and continue · D"
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.sm
+                  bordered: true
+                  focusable: true
+                  enabled: !root.editionRequestActive && !root.aiBusy
+                    && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
+                  onClicked: root.completeEditionStory("done")
+                }
+                Button {
+                  text: "Skip"
+                  tooltipText: "Move on without hiding this story or teaching Show Less"
+                  foreground: root.dim
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.sm
+                  focusable: true
+                  enabled: !root.editionRequestActive && !root.aiBusy
+                    && root.activeArticle !== null && root.activeArticle.edition_status === "pending"
+                  onClicked: root.completeEditionStory("skip")
+                }
+                Button {
+                  text: "Pause edition"
+                  foreground: root.dim
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.sm
+                  focusable: true
+                  onClicked: root.navigateBack()
+                }
+              }
+              Text {
+                width: parent.width
+                visible: root.editionError !== ""
+                text: root.editionError
+                textFormat: Text.PlainText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
+              }
+            }
+
           }
 
           Item {
@@ -5496,11 +5648,15 @@ Item {
             setupSummaryText: root.setupSummary() + "\n" + root.setupLocationSummary()
             setupDetailsText: root.setupChoiceDetails()
             sourceMixText: root.sourceMixSummary()
+            readingSize: root.readingSize
+            readingSizeMessage: root.readingSizeMessage
+            readingSizeBusy: root.readingSizeSaving || root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running || setupSaveProc.running || profileTransferProc.running || navigationProc.running || footerLinkProc.running || behaviorProc.running
+            onReadingSizeRequested: function(size) { root.setReadingSize(size) }
             articleImages: root.articleImages
-            articleImagesBusy: root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running || setupSaveProc.running || profileTransferProc.running || navigationProc.running || footerLinkProc.running || behaviorProc.running
+            articleImagesBusy: root.readingSizeSaving || root.articleImagesSaving || root.contextFramingSaving || root.aiBusy || systemAiPresetProc.running || setupSaveProc.running || profileTransferProc.running || navigationProc.running || footerLinkProc.running || behaviorProc.running
             onArticleImagesRequested: function(enabled) { root.setArticleImages(enabled) }
             contextFraming: root.contextFraming
-            contextFramingBusy: root.contextFramingSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
+            contextFramingBusy: root.contextFramingSaving || root.readingSizeSaving || root.articleImagesSaving || root.aiBusy || systemAiPresetProc.running
             onContextFramingRequested: function(enabled) { root.setContextFraming(enabled) }
             aiProvider: root.aiProvider
             aiSummary: root.aiProvider === "system"
@@ -5530,12 +5686,12 @@ Item {
             showLessTermText: root.showLessTermSummary()
             showLessSourceText: root.showLessSourceSummary()
             profileBusy: profileProc.running
-            navigationBusy: root.articleImagesSaving || navigationProc.running
-            behaviorBusy: root.articleImagesSaving || behaviorProc.running
-            footerLinkBusy: root.articleImagesSaving || footerLinkProc.running
-            aiPresetBusy: root.articleImagesSaving || systemAiPresetProc.running || root.contextFramingSaving
+            navigationBusy: root.readingSizeSaving || root.articleImagesSaving || navigationProc.running
+            behaviorBusy: root.readingSizeSaving || root.articleImagesSaving || behaviorProc.running
+            footerLinkBusy: root.readingSizeSaving || root.articleImagesSaving || footerLinkProc.running
+            aiPresetBusy: root.readingSizeSaving || root.articleImagesSaving || systemAiPresetProc.running || root.contextFramingSaving
             interestBusy: interestProc.running
-            transferBusy: root.articleImagesSaving || profileTransferProc.running
+            transferBusy: root.readingSizeSaving || root.articleImagesSaving || profileTransferProc.running
             resetBusy: profileResetProc.running || root.readingEventsBusy
             updateBusy: updateStatusProc.running
             updateLaunching: root.applicationUpdateLaunching
