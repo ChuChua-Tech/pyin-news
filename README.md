@@ -328,6 +328,8 @@ catalog or select **Enter model name manually…** to use an exact identifier.
 An optional reasoning dropdown shows settings advertised for the chosen model;
 **Agent default** leaves reasoning to the agent's configuration. These choices
 apply only to PYIN and do not change the agent's settings.
+When selecting a different Codex model, its own default reasoning applies unless
+you choose an explicit effort; the previous model's effort is not inherited.
 
 Model discovery runs when the picker is opened or explicitly refreshed.
 It reads Codex's native model catalog, Claude Code's initialization catalog,

@@ -338,8 +338,15 @@ def codex_settings() -> tuple[dict[str, Any], Path]:
     return settings, config_root
 
 
-def codex_launch(executable: str, directory: Path) -> tuple[list[str], dict[str, str]]:
+def codex_launch(executable: str, directory: Path,
+                 choice: dict[str, str] | None = None) -> tuple[list[str], dict[str, str]]:
     settings, config_root = codex_settings()
+    selected_model = (choice or {}).get("model")
+    if selected_model and selected_model != settings.get("model"):
+        # Native effort belongs to the native model. Let Codex resolve the new
+        # model's default instead of carrying an incompatible effort across.
+        settings["model"] = selected_model
+        settings.pop("model_reasoning_effort", None)
     environment = clean_environment("codex")
     provider = settings.get("model_providers." + str(settings.get("model_provider", "")), {})
     keys = [provider.get("env_key"), *provider.get("env_http_headers", {}).values()]
@@ -361,7 +368,7 @@ def codex_exchange(
     executable: str, directory: Path, prompt: str | None, choice: dict[str, str],
     on_delta: Callable[[str], None], *, timeout: float = 180, refresh_auth: bool = False,
 ) -> dict[str, Any]:
-    command, environment = codex_launch(executable, directory)
+    command, environment = codex_launch(executable, directory, choice)
     fragments: list[str] = []
     output_size = 0
     thread_id = ""

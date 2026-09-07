@@ -146,6 +146,21 @@ class NativeConfigurationTests(unittest.TestCase):
                         'GITHUB_TOKEN=unrelated-secret\nEVIL=$(touch /tmp/never)\n')
         self.assertEqual(ai.native_env_file(path, {'GEMINI_API_KEY'}), {'GEMINI_API_KEY':'native-key'})
 
+    def test_codex_model_override_drops_only_the_other_models_effort(self):
+        for selected in ('', 'native-model', 'different-model'):
+            with self.subTest(selected=selected), \
+                 mock.patch.object(ai,'codex_settings',return_value=({
+                     'model':'native-model','model_reasoning_effort':'max'},self.root)), \
+                 mock.patch.object(ai,'isolated_command',return_value=['agent']), \
+                 mock.patch.object(ai,'verify_version'):
+                command,_ = ai.codex_launch('agent',self.root,{'model':selected,'effort':''})
+                config = dict(command[i+1].split('=',1) for i,arg in enumerate(command) if arg=='-c')
+                self.assertEqual(json.loads(config['model']),selected or 'native-model')
+                if selected == 'different-model':
+                    self.assertNotIn('model_reasoning_effort',config)
+                else:
+                    self.assertEqual(json.loads(config['model_reasoning_effort']),'max')
+
     def test_isolation_mounts_one_credential_and_private_runtime_not_user_home(self):
         auth = self.root/'auth.json'; auth.write_text('{}')
         command = ai.isolated_command('codex', [sys.executable], self.root, {},

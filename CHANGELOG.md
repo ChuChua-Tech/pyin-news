@@ -20,6 +20,9 @@ Versioning.
 - Check native agent compatibility before sending article text. Unverified
   versions and unsupported authentication configurations stop with an actionable
   error; they never fall back to a less restricted invocation.
+- When PYIN selects a different Codex model, use that model's default reasoning
+  unless explicitly overridden. Do not inherit an incompatible effort from the
+  model configured in Codex.
 - Bound AI input, output and process lifetime, reject response tool calls, and
   constrain Local server requests to numeric loopback peers with no redirects or
   inherited proxy settings. Local server and No AI remain available.

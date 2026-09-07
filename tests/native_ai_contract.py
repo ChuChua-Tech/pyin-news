@@ -149,13 +149,17 @@ def worker(descriptor_path):
     backend.codex_path = lambda: executable
     backend.claude_path = lambda: executable
     backend.CLAUDE_SUMMARY_TIMEOUT_SECONDS = backend.ACP_SUMMARY_TIMEOUT_SECONDS = 30
-    for attack in (False,True):
+    cases = [("summary", False, {}), ("forced tool", True, {})]
+    if agent == "codex":
+        cases.append(("selected model default", False, {"model":"gpt-5.4-mini", "effort":""}))
+    for case, attack, choice in cases:
         requests.clear(); state["attack"] = attack
         watch = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
         assert watch >= 0 and libc.inotify_add_watch(watch,os.fsencode(private_path),1) >= 0
         try:
             if agent == "codex":
-                result = backend.codex_exchange("Summarize: the library opens on Monday.", {"model":"","effort":""}, lambda text:None)
+                result = backend.codex_exchange("Summarize: the library opens on Monday.",
+                                                choice or {"model":"","effort":""}, lambda text:None)
             elif agent == "gemini":
                 result = backend.acp_exchange(agent,"Summarize: the library opens on Monday.", {"model":"fixture","effort":""}, lambda text:None)
             else:
@@ -181,7 +185,10 @@ def worker(descriptor_path):
         assert not (base/"startup-marker").exists(), "agent customization started"
         if not attack:
             assert outcome == ANSWER, outcome
-        print(json.dumps({"agent":agent,"case":"forced tool" if attack else "summary", "tools":0,
+        if choice.get("model"):
+            assert all(request.get("model") == choice["model"] for request in requests), "selected model changed"
+            assert all(request.get("reasoning",{}).get("effort") != "ultra" for request in requests), "inherited another model's effort"
+        print(json.dumps({"agent":agent,"case":case, "tools":0,
                           "private_file_reads":0,"private_context_sent":False,"outcome":outcome}),flush=True)
     server.shutdown()
 
