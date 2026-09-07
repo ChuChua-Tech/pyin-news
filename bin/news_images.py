@@ -3,16 +3,15 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-from html.parser import HTMLParser
 import http.client
-import ipaddress
+from html.parser import HTMLParser
 from pathlib import Path
-import socket
-import ssl
 import struct
 import tempfile
 import time
 import urllib.parse
+
+import news_http
 
 MEDIA = "{http://search.yahoo.com/mrss/}"
 MAX_BYTES = 2 * 1024 * 1024
@@ -134,58 +133,12 @@ def raster_size(data: bytes) -> tuple[int, int]:
 
 
 def download_image(url: str) -> bytes:
-    deadline = time.monotonic() + 10
-    for _ in range(5):
-        url = image_url(url)
-        if not url:
-            raise ValueError("invalid image URL")
-        parsed = urllib.parse.urlsplit(url)
-        host = parsed.hostname.encode("idna").decode("ascii")
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
-            raise ValueError("image host is not public")
-        timeout = max(0.1, min(4, deadline - time.monotonic()))
-        if time.monotonic() >= deadline:
-            raise TimeoutError("image deadline")
-        # Connect to the checked address, not a second DNS lookup. Retain the
-        # publisher hostname for TLS verification and the HTTP Host header.
-        sock = socket.create_connection(addresses[0][4][:2], timeout=timeout)
-        connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-        connection = connection_type(host, port, timeout=timeout)
-        try:
-            if parsed.scheme == "https":
-                sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
-            connection.sock = sock
-            target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
-            connection.request("GET", target, headers={
-                "User-Agent": "PYIN-News/0.25.0", "Accept": "image/jpeg,image/png,image/webp",
-                "Accept-Encoding": "identity",
-            })
-            response = connection.getresponse()
-            if response.status in (301, 302, 303, 307, 308):
-                url = image_url(response.getheader("Location", ""), url)
-                continue
-            if response.status != 200:
-                raise ValueError("image unavailable")
-            if int(response.getheader("Content-Length", "0")) > MAX_BYTES:
-                raise ValueError("image too large")
-            chunks = []; size = 0
-            while size <= MAX_BYTES:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("image deadline")
-                sock.settimeout(max(0.1, min(4, deadline - time.monotonic())))
-                chunk = response.read1(min(65536, MAX_BYTES + 1 - size))
-                if not chunk:
-                    break
-                chunks.append(chunk); size += len(chunk)
-            if size > MAX_BYTES:
-                raise ValueError("image too large")
-            return b"".join(chunks)
-        finally:
-            connection.close()
-            sock.close()
-    raise ValueError("too many image redirects")
+    data, _, status = news_http.get(url, MAX_BYTES, timeout=10, headers={
+        "User-Agent": "PYIN-News/0.25.1", "Accept": "image/jpeg,image/png,image/webp",
+    })
+    if status != 200:
+        raise ValueError("image unavailable")
+    return data
 
 
 def prune_cache(directory: Path, now: float) -> None:

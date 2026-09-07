@@ -1256,7 +1256,7 @@ FocusScope {
 
           Repeater {
             model: [
-              { value: "system", label: "Follow Omarchy", description: "Use Omarchy's selected Codex, Claude Code, Gemini or Grok, with its existing sign-in and model settings" },
+              { value: "system", label: "Follow Omarchy", description: "Use Omarchy's selected Claude Code, Gemini or Grok, with its existing sign-in and model settings" },
               { value: "local", label: "Local server", description: "Use an OpenAI-compatible endpoint on this machine only" },
               { value: "off", label: "No AI", description: "Disable per-story AI TL;DR actions" }
             ]

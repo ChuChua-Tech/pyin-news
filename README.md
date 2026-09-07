@@ -32,7 +32,7 @@ panel is opened; it can be reopened later with `c` or from Profile.
 - Network access to the RSS/Atom and article hosts the reader checks
 - Subject alerts use Omarchy's native notification sender; `notify-send` is a
   non-clickable compatibility fallback when that helper is unavailable
-- Optional: Codex, Claude Code, Gemini CLI or Grok Build for System AI, or a loopback OpenAI-compatible server for
+- Optional: Claude Code, Gemini CLI or Grok Build for System AI, or a loopback OpenAI-compatible server for
   Local server mode; the news reader remains fully usable with No AI
 
 PYIN has no installer script, package-manager step, background system service,
@@ -41,13 +41,8 @@ helper process run unsandboxed with the permissions of the signed-in user.
 
 ## Update
 
-Profile → App & Updates can identify the installed version and channel, check
-the stable branch on demand, and install a release after a second confirmation.
-It delegates installation, validation, rollback, and shell reload to Omarchy.
-Checks are never automatic, development and modified checkouts are protected,
-and user data remains outside the plugin folder.
-
-The equivalent terminal command is:
+Profile → App → Version & Updates shows the installed version. PYIN does not
+check for, download or install its own updates. Manage updates through Omarchy:
 
 ```bash
 omarchy plugin update tech.chuchua.news
@@ -77,14 +72,19 @@ endpoints. Reading a synopsis uses cached feed text; requesting a TL;DR can also
 fetch the publisher's article page, and Open Original opens that page in your
 browser. Optional article images also contact publisher/CDN image hosts as
 headlines become visible; disabling images prevents these image requests.
+Feed, article and image requests accept only public HTTP(S) targets on ports 80
+or 443. Every DNS answer and connected peer must be a public global IP, and
+every redirect is checked again. Connections use the checked numeric IP while
+preserving HTTPS certificate verification and the original hostname. Private/LAN
+feeds are not supported; these requests do not use proxy environment variables.
+Local AI uses a separate, explicitly loopback-only transport.
 
 AI never ranks the feed and runs only after an explicit TL;DR or question. In
 System AI mode, the supplied article text is sent to the selected agent's
 configured model. In Local server mode, it is sent only to the configured
 loopback endpoint. With No AI selected, article text is not sent to any model.
 The feedback form opens a local pre-addressed email draft and sends nothing
-until the user chooses to send it. Explicit update checks contact GitHub;
-opening or refreshing the model picker can contact the selected agent’s service
+until the user chooses to send it. Opening or refreshing the model picker can contact the selected agent’s service
 for its catalog without submitting an AI prompt.
 
 ## Controls
@@ -267,7 +267,7 @@ time; repeated visits do not repeatedly increase the story's learning weight.
 The reader saves visits in order and updates its counts after each save succeeds.
 
 Profile is organized into five collapsed groups: Customize, Your Choices,
-Learned Curation, App & Updates, and Data & Privacy, with a separate Source
+Learned Curation, App, and Data & Privacy, with a separate Source
 Health section. A compact Library & Controls block keeps History, Read Later,
 Hidden, Alerts, and Edit Setup immediately reachable. The full viewed-story list
 now lives on History instead of expanding the Profile page indefinitely.
@@ -275,21 +275,47 @@ now lives on History instead of expanding the Profile page indefinitely.
 ## AI providers
 
 `Follow Omarchy` is the default wizard choice (System AI mode). PYIN reads Omarchy's selected agent from
-`~/.config/omarchy/defaults/agent`. Codex uses its local app-server event stream
-in an ephemeral, read-only sandbox. Claude Code uses its native streaming CLI,
-with existing authentication and model settings, no session persistence, and
-tools disabled. Claude's safe mode disables customizations such as hooks,
-plugins and project instructions for these source-bound requests. Use a current
-Claude Code release; this adapter was verified with 2.1.261. See the
-[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
-Gemini CLI uses ACP; Grok Build uses ACP for discovery and its constrained
-headless interface for summaries. Tools are disabled and session storage is
-temporary. Gemini reuses its
-existing keychain or file-backed sign-in and settings; Grok retains its model
-and authentication configuration and references its existing login. Agent
-customizations are excluded from these article requests. No extra Python
-packages or AI SDKs are required. The adapters were checked against Gemini CLI
-0.58.0 and Grok Build 1.0.13; use current releases. See the
+`~/.config/omarchy/defaults/agent`. Supported agents are Codex, Claude Code,
+Gemini CLI and Grok Build. Each runs in a private Bubblewrap filesystem with
+tools disabled, filtered model/authentication settings and temporary session
+storage. Personal documents, agent instructions, hooks, plugins, memories and
+MCP configuration are excluded. Native credential files are mounted individually
+so the official agent can use and refresh its own sign-in. PYIN does not copy
+those credential files into its profile or exports.
+
+Codex uses its app-server for summaries and model discovery. Claude uses its
+native Messages stream, Gemini uses ACP, and Grok uses ACP for discovery and its
+restricted headless interface for summaries. No Python AI SDK is required.
+Bubblewrap is required for native agents; if missing, install it with
+`omarchy pkg add bubblewrap`.
+Omarchy's mise launchers are resolved from global tool-version settings to
+installed executables before launch. PYIN does not run mise hooks or installers;
+if that configured installation is missing, it reports the missing dependency.
+
+The compatibility check runs before article text is sent. This release verifies:
+
+| Agent | Verified version |
+| --- | --- |
+| Codex | 0.153.4 |
+| Claude Code | 2.1.261 |
+| Gemini CLI | 0.58.0 |
+| Grok Build | 1.0.13 |
+
+An unverified agent version stops with an explanation. Check for a PYIN update
+or choose another supported Omarchy agent or Local server; PYIN never falls back
+to an unrestricted invocation. Model names and reasoning choices remain dynamic.
+The native boundary tests run real agents against fake model responses inside a
+private network, including forced tool calls and personal-configuration checks.
+
+Native file-based sign-in is supported. Codex keyring-only sign-in, managed Codex
+or Claude configurations, Grok system-managed or pinned policies, Claude/Grok
+credential-helper commands, Claude alternate cloud authentication, and Gemini
+Vertex/external authentication are not yet verified and are rejected explicitly.
+Sign in with the native agent
+first; PYIN does not implement a separate subscription login or reuse subscription
+tokens with ordinary provider APIs. See the
+[Codex app-server reference](https://learn.chatgpt.com/docs/app-server),
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference),
 [Gemini configuration reference](https://geminicli.com/docs/reference/configuration/)
 and [Grok integration reference](https://docs.x.ai/build/cli/headless-scripting).
 Grok receives the article as an embedded text resource, avoiding an extra
@@ -305,9 +331,11 @@ catalog or select **Enter model name manually…** to use an exact identifier.
 An optional reasoning dropdown shows settings advertised for the chosen model;
 **Agent default** leaves reasoning to the agent's configuration. These choices
 apply only to PYIN and do not change the agent's settings.
+When selecting a different Codex model, its own default reasoning applies unless
+you choose an explicit effort; the previous model's effort is not inherited.
 
 Model discovery runs when the picker is opened or explicitly refreshed.
-It reads Codex's app-server catalog, Claude Code's initialization catalog,
+It reads Codex's native model catalog, Claude Code's initialization catalog,
 or Gemini/Grok's ACP model catalog
 without submitting an AI prompt. Results are cached locally for fifteen minutes. A failed
 refresh can show the previous catalog with an error; Agent default and manual
@@ -325,7 +353,7 @@ Completed summaries show the effective model returned by the agent, plus
 provider information where the agent supplies it.
 Requests using the new model settings generate fresh summaries because provider
 configuration can change outside PYIN. Legacy CLI preset flags remain accepted
-for compatibility; their original caching behavior applies only to Codex.
+for compatibility with saved preferences; they do not enable unsupported agents.
 
 Setup and Profile also report the selected agent's availability. If Omarchy has
 no selected agent, PYIN does not infer Codex from its installation. Unsupported
@@ -340,6 +368,9 @@ OpenAI-compatible endpoint. Ollama's default example is
 `http://127.0.0.1:11434/v1`; set the model to one installed on your server. The
 request enables OpenAI-compatible SSE streaming and falls back cleanly when a
 server returns its answer as one JSON message.
+Local connections use numeric loopback peers, never a proxy or redirect. AI
+requests and replies have size and time limits, and tool-call responses are
+rejected.
 
 `No AI` disables AI TL;DR while leaving the entire RSS reader, model-free
 catalog search, ranking system, source catalog, bookmarks, and alerts available.
@@ -553,7 +584,7 @@ stories hidden and keeping explicit interest-graph choices until they are
 individually removed.
 
 The Profile page is the control centre for topic choices, menu layout, article
-behaviour, AI model preferences, source setup, app updates, and local data. Its
+behaviour, AI model preferences, source setup, app information, and local data. Its
 five primary groups and nested Setup & Source Mix and Show Less sections start
 collapsed, keeping everyday controls compact. Its Back-action switch chooses
 whether Back/Escape means “finished—mark read and hide” or simply returns

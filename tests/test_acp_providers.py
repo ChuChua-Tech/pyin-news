@@ -100,6 +100,11 @@ class AcpProvidersTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         self.backend = load_backend()
+        boundary = mock.patch.object(self.backend.news_ai, 'prepare_native',
+            side_effect=lambda agent, command, directory, environment=None:
+                (command, {**os.environ, **(environment or {})}))
+        boundary.start()
+        self.addCleanup(boundary.stop)
         isolate_backend(self.backend, self.base)
         self.backend.AGENT_PATH = self.base / 'agent'
         self.backend.AGENT_PATH.write_text('gemini')
@@ -254,8 +259,8 @@ class AcpProvidersTest(unittest.TestCase):
         env = self.backend.acp_environment('gemini', directory)
         config = json.loads(Path(env['GEMINI_CLI_SYSTEM_SETTINGS_PATH']).read_text())
         copied = Path(env['GEMINI_CLI_HOME']) / '.gemini' / 'oauth_creds.json'
-        self.assertEqual(copied.read_text(), '{"token":"PRIVATE"}')
-        self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(copied.exists())
+        self.assertEqual((original_config / 'oauth_creds.json').read_text(), '{"token":"PRIVATE"}')
         self.assertEqual(env.get('HOME'), os.environ.get('HOME'))
         self.assertEqual(config['security']['auth']['selectedType'], 'oauth-personal')
         self.assertEqual(config['tools']['core'], [])
@@ -284,9 +289,10 @@ class AcpProvidersTest(unittest.TestCase):
 
     def test_parent_cancellation_stops_agent_and_removes_temporary_session(self):
         runner = self.base / 'runner.py'
-        runner.write_text('import sys\nsys.path.insert(0, ' + repr(str(ROOT / 'tests')) + ')\n'
+        runner.write_text('import sys, os\nsys.path.insert(0, ' + repr(str(ROOT / 'tests')) + ')\n'
             'from test_ranking import load_backend, isolate_backend\n'
             'b=load_backend()\nisolate_backend(b, ' + repr(str(self.base)) + ')\n'
+            'b.news_ai.prepare_native=lambda agent, command, directory, environment=None: (command, {**os.environ, **(environment or {})})\n'
             'b.system_agent_path=lambda agent: ' + repr(str(self.fake)) + '\n'
             'b.acp_exchange("gemini", "Article", {"model":"", "effort":""}, lambda text:None)\n')
         with mock.patch.dict(os.environ, {'PYIN_ACP_MODE': 'hang-summary'}):
