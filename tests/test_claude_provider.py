@@ -187,6 +187,7 @@ class ClaudeProviderTests(unittest.TestCase):
             self.assertFalse(self.backend.ai_models()['cached'])
         self.backend.AGENT_PATH.write_text('codex')
         with mock.patch.object(self.backend.subprocess, 'Popen') as launch, \
+             mock.patch.object(self.backend, 'codex_path', return_value=str(self.executable)), \
              mock.patch.object(self.backend, 'discover_codex_models', return_value=[]):
             result = self.backend.ai_models()
             self.assertEqual(result['agent'], 'codex')
