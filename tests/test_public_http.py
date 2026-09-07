@@ -86,6 +86,7 @@ class PublicWebTests(unittest.TestCase):
         self.assertNotIn('Authorization', args.kwargs['headers'])
         self.assertNotIn('Cookie', args.kwargs['headers'])
         self.sock.close.assert_called()
+        self.assertTrue(self.conn.getresponse.return_value.closed)
 
     def test_peer_mismatch_rejected_before_tls_or_http(self):
         for peer in ('127.0.0.1', '8.8.8.8'):

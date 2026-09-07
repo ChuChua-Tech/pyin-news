@@ -111,6 +111,7 @@ def get(url: str, max_bytes: int, *, timeout: float = 14,
         connection = http.client.HTTPConnection(host, port, timeout=timeout)
         connection.auto_open = 0  # Never fall back to an unchecked reconnect.
         connection.sock = sock
+        response = None
         try:
             request_headers = {k: v for k, v in (headers or {}).items()
                                if k.lower() in {"user-agent", "accept", "if-none-match", "if-modified-since"}}
@@ -149,6 +150,8 @@ def get(url: str, max_bytes: int, *, timeout: float = 14,
                 raise ValueError("response exceeded size limit")
             return b"".join(chunks), response.headers, response.status
         finally:
+            if response is not None:
+                response.close()
             connection.close()
             sock.close()
     raise ValueError("too many web redirects")
