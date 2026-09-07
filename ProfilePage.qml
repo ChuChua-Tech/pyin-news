@@ -50,7 +50,7 @@ Flickable {
   property var counts: ({})
   property var storage: ({})
   property var exposure: ({})
-  property var updateData: ({})
+  property var appInfoData: ({})
   property var sourceHealthData: ({})
   property bool sourceHealthBusy: false
   property bool feedsRefreshing: false
@@ -65,16 +65,13 @@ Flickable {
   property bool interestBusy: false
   property bool transferBusy: false
   property bool resetBusy: false
-  property bool updateBusy: false
-  property bool updateLaunching: false
   property bool confirmReset: false
-  property bool confirmUpdate: false
 
   property bool customizeExpanded: false
   property bool choicesExpanded: false
   property bool learningExpanded: false
   property bool dataExpanded: false
-  property bool updatesExpanded: false
+  property bool appInfoExpanded: false
   property bool setupDetailsExpanded: false
   property bool showLessExpanded: false
 
@@ -90,8 +87,6 @@ Flickable {
   signal exportRequested()
   signal importRequested()
   signal resetRequested()
-  signal updateCheckRequested()
-  signal updateInstallRequested()
   signal sourceHealthRequested()
   signal feedsRefreshRequested()
 
@@ -105,11 +100,10 @@ Flickable {
     page.choicesExpanded = false
     page.learningExpanded = false
     page.dataExpanded = false
-    page.updatesExpanded = false
+    page.appInfoExpanded = false
     sourceHealthSection.expanded = false
     page.setupDetailsExpanded = false
     page.showLessExpanded = false
-    page.confirmUpdate = false
     page.syncFooterLinkDraft()
     page.footerLinkMessage = ""
     page.contentY = 0
@@ -973,8 +967,8 @@ Flickable {
 
     Button {
       width: parent.width
-      text: "APP & UPDATES  ·  VERSION, CHANNEL & RELEASES"
-      iconText: page.updatesExpanded ? "󰅀" : "󰅂"
+      text: "APP  ·  VERSION & UPDATES"
+      iconText: page.appInfoExpanded ? "󰅀" : "󰅂"
       foreground: page.accent
       accent: page.accent
       fontFamily: page.fontFamily
@@ -982,19 +976,19 @@ Flickable {
       leftAlign: true
       focusable: true
       horizontalPadding: 0
-      tooltipText: page.updatesExpanded ? "Collapse App & Updates" : "Inspect version and check for stable updates"
-      onClicked: page.updatesExpanded = !page.updatesExpanded
+      tooltipText: page.appInfoExpanded ? "Collapse app information" : "Show the installed version and update instructions"
+      onClicked: page.appInfoExpanded = !page.appInfoExpanded
     }
 
     Column {
-      visible: page.updatesExpanded
+      visible: page.appInfoExpanded
       width: parent.width
       spacing: Style.spacing.lg
 
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: String(page.updateData.summary || "Loading update status…")
+        text: String(page.appInfoData.summary || "Loading app information…")
         color: page.accent
         font.family: page.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -1005,8 +999,8 @@ Flickable {
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: String(page.updateData.detail
-          || "PYIN checks for releases only when you request it.")
+        text: String(page.appInfoData.detail
+          || "Manage plugin updates through Omarchy.")
         color: page.dim
         font.family: page.fontFamily
         font.pixelSize: Style.font.caption
@@ -1015,87 +1009,10 @@ Flickable {
       }
 
       Text {
-        visible: String(page.updateData.current_commit || "") !== ""
         width: parent.width
+        text: "Run in your terminal: omarchy plugin update tech.chuchua.news"
         textFormat: Text.PlainText
-        text: "CHANNEL  ·  " + String(page.updateData.channel || "unknown").toUpperCase()
-          + (String(page.updateData.branch || "") !== ""
-            ? " / " + String(page.updateData.branch) : "")
-          + "\nCOMMIT  ·  " + String(page.updateData.current_commit || "")
         color: page.foreground
-        font.family: page.fontFamily
-        font.pixelSize: Style.font.caption
-        lineHeight: 1.3
-        wrapMode: Text.WrapAnywhere
-      }
-
-      Text {
-        property var result: page.updateData.last_result || ({})
-        visible: String(result.summary || "") !== ""
-        width: parent.width
-        textFormat: Text.PlainText
-        text: "LAST UPDATE  ·  " + String(result.summary || "")
-        color: result.ok === false ? page.foreground : page.accent
-        font.family: page.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.Wrap
-      }
-
-      Flow {
-        width: parent.width
-        spacing: Style.spacing.sm
-
-        Button {
-          visible: page.updateData.git_managed === true
-          text: page.updateBusy ? "Checking…" : "Check for updates"
-          iconText: page.updateBusy ? "󰦖" : "󰑐"
-          iconSpinning: page.updateBusy
-          foreground: page.foreground
-          accent: page.accent
-          fontFamily: page.fontFamily
-          bordered: true
-          focusable: true
-          enabled: page.updateData.can_check === true
-            && !page.updateBusy && !page.updateLaunching
-          tooltipText: page.updateData.can_check === true
-            ? "Compare this stable copy with the repository"
-            : "Stable checks are disabled for development or modified checkouts"
-          onClicked: {
-            page.confirmUpdate = false
-            page.updateCheckRequested()
-          }
-        }
-
-        Button {
-          visible: page.updateData.update_available === true || page.updateLaunching
-          text: page.updateLaunching ? "Updating…"
-            : (page.confirmUpdate ? "Confirm update"
-              : "Install " + String(page.updateData.target_version || "update"))
-          iconText: page.updateLaunching ? "󰦖" : (page.confirmUpdate ? "󰄬" : "󰁝")
-          iconSpinning: page.updateLaunching
-          foreground: page.foreground
-          accent: page.accent
-          fontFamily: page.fontFamily
-          bordered: true
-          focusable: true
-          selected: page.confirmUpdate
-          enabled: page.updateData.can_install === true
-            && !page.updateBusy && !page.updateLaunching
-          tooltipText: page.confirmUpdate
-            ? "Install through Omarchy and reload PYIN"
-            : "Review the confirmation before installing"
-          onClicked: {
-            if (!page.confirmUpdate) page.confirmUpdate = true
-            else page.updateInstallRequested()
-          }
-        }
-      }
-
-      Text {
-        width: parent.width
-        textFormat: Text.PlainText
-        text: "No silent installs. Update checks are manual, installation requires confirmation, and Omarchy validates the replacement before keeping it. Your profile, history, alerts, sources, and saved stories live outside the plugin folder and remain untouched."
-        color: page.dim
         font.family: page.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.Wrap

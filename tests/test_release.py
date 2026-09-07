@@ -183,38 +183,20 @@ class ReleasePackageTests(unittest.TestCase):
         backend = load_backend()
         captured_headers = {}
 
-        class Response:
-            headers = {}
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self, _size):
-                return b"<rss><channel /></rss>"
-
-        def fake_urlopen(request, timeout):
+        def fake_get(url, max_bytes, *, timeout, headers):
             self.assertGreater(timeout, 0)
-            captured_headers.update(dict(request.header_items()))
-            return Response()
+            captured_headers.update(headers)
+            return b"<rss><channel /></rss>", {}, 200
 
-        with mock.patch.object(backend.urllib.request, "urlopen", fake_urlopen):
-            body, _validators = backend.http_get_conditional(
-                "https://example.com/feed", 1024
-            )
-
+        with mock.patch.object(backend.news_http, "get", side_effect=fake_get):
+            body, _validators = backend.http_get_conditional("https://example.com/feed", 1024)
         self.assertEqual(body, b"<rss><channel /></rss>")
-        self.assertNotIn("Accept-encoding", captured_headers)
-        self.assertEqual(captured_headers["User-agent"], backend.USER_AGENT)
-
+        self.assertNotIn("Accept-Encoding", captured_headers)
+        self.assertEqual(captured_headers["User-Agent"], backend.USER_AGENT)
         captured_headers.clear()
-        with mock.patch.object(backend.urllib.request, "urlopen", fake_urlopen):
-            backend.http_get_conditional(
-                "https://www.cbc.ca/webfeed/rss/rss-topstories", 1024
-            )
-        self.assertEqual(captured_headers["User-agent"], "Mozilla/5.0")
+        with mock.patch.object(backend.news_http, "get", side_effect=fake_get):
+            backend.http_get_conditional("https://www.cbc.ca/webfeed/rss/rss-topstories", 1024)
+        self.assertEqual(captured_headers["User-Agent"], "Mozilla/5.0")
 
     def test_alert_notification_carries_an_argv_only_article_deep_link(self):
         backend = load_backend()
@@ -266,97 +248,27 @@ class ReleasePackageTests(unittest.TestCase):
             {"title": "Iranian officials discuss war", "feed_summary": ""},
         ))
 
-    def test_update_status_protects_development_and_finds_stable_fast_forwards(self):
+    def test_app_information_is_local_and_cannot_install_updates(self):
         backend = load_backend()
-
-        def completed(arguments, returncode=0, stdout=""):
-            return subprocess.CompletedProcess(arguments, returncode, stdout, "")
-
-        def development_git(*arguments, **_kwargs):
-            key = tuple(arguments)
-            responses = {
-                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
-                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="develop\n"),
-                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
-                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
-            }
-            return responses[key]
-
-        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
-                mock.patch.object(backend, "run_plugin_git", side_effect=development_git), \
-                mock.patch.object(backend, "recent_update_result", return_value={}):
-            protected = backend.application_update_status(check_remote=True)
-
-        self.assertEqual(protected["state"], "development")
-        self.assertFalse(protected["can_check"])
-        self.assertFalse(protected["can_install"])
-
-        def stable_git(*arguments, **_kwargs):
-            key = tuple(arguments)
-            responses = {
-                ("rev-parse", "--show-toplevel"): completed(arguments, stdout=str(backend.PLUGIN_DIR)),
-                ("symbolic-ref", "--quiet", "--short", "HEAD"): completed(arguments, stdout="main\n"),
-                ("rev-parse", "HEAD"): completed(arguments, stdout="a" * 40 + "\n"),
-                ("status", "--porcelain", "--untracked-files=normal"): completed(arguments),
-                ("fetch", "--quiet", "origin", "HEAD"): completed(arguments),
-                ("rev-parse", "FETCH_HEAD"): completed(arguments, stdout="b" * 40 + "\n"),
-                ("show", "FETCH_HEAD:manifest.json"): completed(
-                    arguments, stdout=json.dumps({"version": "0.20.0"})
-                ),
-                ("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"): completed(arguments),
-            }
-            return responses[key]
-
-        with mock.patch.object(backend.shutil, "which", return_value="/usr/bin/git"), \
-                mock.patch.object(backend, "run_plugin_git", side_effect=stable_git), \
-                mock.patch.object(backend, "recent_update_result", return_value={}):
-            available = backend.application_update_status(check_remote=True)
-
-        self.assertEqual(available["state"], "available")
-        self.assertEqual(available["target_version"], "0.20.0")
-        self.assertTrue(available["can_install"])
-
-    def test_update_install_delegates_to_omarchy_after_safe_check(self):
-        backend = load_backend()
-        update_status = {
-            "ok": True,
-            "state": "available",
-            "update_available": True,
-            "can_install": True,
-        }
-        completed = subprocess.CompletedProcess([], 0, "Updated tech.chuchua.news.\n", "")
-
-        with mock.patch.object(
-            backend, "application_update_status", return_value=update_status
-        ), mock.patch.object(
-            backend.shutil, "which", return_value="/usr/bin/omarchy"
-        ), mock.patch.object(
-            backend.subprocess, "run", return_value=completed
-        ) as run, mock.patch.object(
-            backend, "plugin_manifest_version", return_value="0.19.0"
-        ), mock.patch.object(
-            backend, "write_json_atomic"
-        ) as write_result, mock.patch.object(backend, "notify_update_result"):
-            payload = backend.install_application_update()
-
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["state"], "installed")
-        run.assert_called_once()
-        self.assertEqual(
-            run.call_args.args[0],
-            ["/usr/bin/omarchy", "plugin", "update", backend.PLUGIN_ID, "--yes"],
-        )
-        write_result.assert_called_once()
-
-    def test_profile_exposes_manual_confirmed_native_updates(self):
-        profile_qml = (ROOT / "ProfilePage.qml").read_text(encoding="utf-8")
-        app_qml = (ROOT / "App.qml").read_text(encoding="utf-8")
-
-        self.assertIn("APP & UPDATES", profile_qml)
-        self.assertIn("Check for updates", profile_qml)
-        self.assertIn("Confirm update", profile_qml)
-        self.assertIn('[root.backendPath, "updates", "--install"]', app_qml)
-        self.assertIn("Quickshell.execDetached", app_qml)
+        with mock.patch.object(backend.subprocess, "run") as run, \
+             mock.patch.object(backend.subprocess, "Popen") as launch, \
+             mock.patch.object(backend.news_http, "get") as network:
+            info = backend.application_info()
+        self.assertEqual(info["installed_version"], backend.APP_VERSION)
+        self.assertEqual(info["state"], "external")
+        run.assert_not_called()
+        launch.assert_not_called()
+        network.assert_not_called()
+        for flag in ("--check", "--install"):
+            result = subprocess.run([str(ROOT / "bin/chuchua-news"), "updates", flag], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("invalid choice", result.stderr)
+        profile = (ROOT / "ProfilePage.qml").read_text()
+        app = (ROOT / "App.qml").read_text()
+        self.assertIn('"app-info"', app)
+        self.assertNotIn('"updates"', app)
+        self.assertNotIn("installApplicationUpdate", app)
+        self.assertNotIn("Confirm update", profile)
 
     def test_cached_article_endpoint_supports_notification_deep_links(self):
         backend = load_backend()

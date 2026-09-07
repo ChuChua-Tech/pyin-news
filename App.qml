@@ -146,11 +146,7 @@ Item {
   property var profileData: ({})
   property var sourceHealthData: ({})
   property bool pendingSourceHealthLoad: false
-  property var applicationUpdateData: ({})
-  property bool applicationUpdateCheckRemote: false
-  property bool applicationUpdateLaunching: false
-  property int applicationUpdateStartedTs: 0
-  property int applicationUpdatePolls: 0
+  property var applicationInfoData: ({})
   property var learnedArticles: ({})
   property var readingQueue: []
   property var activeReadingEvent: null
@@ -1690,26 +1686,12 @@ Item {
     sourceHealthProc.running = true
   }
 
-  function loadApplicationUpdateStatus(checkRemote) {
-    if (updateStatusProc.running) return
-    root.applicationUpdateCheckRemote = Boolean(checkRemote)
-    var command = [root.backendPath, "updates"]
-    if (checkRemote) command.push("--check")
-    updateStatusProc.command = command
-    updateStatusProc.running = true
-    if (checkRemote) root.statusText = "Checking the stable PYIN release…"
+  function loadApplicationInfo() {
+    if (appInfoProc.running) return
+    appInfoProc.command = [root.backendPath, "app-info"]
+    appInfoProc.running = true
   }
 
-  function installApplicationUpdate() {
-    if (root.applicationUpdateLaunching
-        || !Boolean(root.applicationUpdateData.can_install)) return
-    root.applicationUpdateLaunching = true
-    root.applicationUpdateStartedTs = Math.floor(Date.now() / 1000)
-    root.applicationUpdatePolls = 0
-    profilePage.confirmUpdate = false
-    root.statusText = "Updating through Omarchy · PYIN will reload when verified"
-    Quickshell.execDetached([root.backendPath, "updates", "--install"])
-  }
 
   function showProfile() {
     root.readingSizeMessage = ""
@@ -1717,7 +1699,7 @@ Item {
     root.viewMode = "profile"
     profilePage.resetSections()
     root.loadProfile()
-    root.loadApplicationUpdateStatus(false)
+    root.loadApplicationInfo()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -3491,27 +3473,12 @@ Item {
   }
 
   Process {
-    id: updateStatusProc
-    stdout: StdioCollector { id: updateStatusStdout; waitForEnd: true }
-    stderr: StdioCollector { id: updateStatusStderr; waitForEnd: true }
+    id: appInfoProc
+    stdout: StdioCollector { id: appInfoStdout; waitForEnd: true }
+    stderr: StdioCollector { id: appInfoStderr; waitForEnd: true }
     onExited: function(exitCode) {
-      var payload = root.parsePayload(updateStatusStdout.text,
-        String(updateStatusStderr.text || "Could not inspect app updates"))
-      if (!payload.ok) {
-        root.statusText = payload.error || "Could not inspect app updates"
-        root.applicationUpdateCheckRemote = false
-        return
-      }
-      root.applicationUpdateData = payload
-      var lastResult = payload.last_result || ({})
-      if (root.applicationUpdateLaunching
-          && Number(lastResult.finished_ts || 0) >= root.applicationUpdateStartedTs) {
-        root.applicationUpdateLaunching = false
-        root.statusText = String(lastResult.summary || "Update finished")
-      } else if (root.applicationUpdateCheckRemote) {
-        root.statusText = String(payload.summary || "Update check finished")
-      }
-      root.applicationUpdateCheckRemote = false
+      var payload = root.parsePayload(appInfoStdout.text, "Could not read app information")
+      if (exitCode === 0 && payload.ok) root.applicationInfoData = payload
     }
   }
 
@@ -3586,20 +3553,6 @@ Item {
     }
   }
 
-  Timer {
-    interval: 2000
-    repeat: true
-    running: root.applicationUpdateLaunching
-    onTriggered: {
-      root.applicationUpdatePolls++
-      if (root.applicationUpdatePolls >= 90) {
-        root.applicationUpdateLaunching = false
-        root.statusText = "Update is taking longer than expected · check again from Profile"
-      } else if (!updateStatusProc.running) {
-        root.loadApplicationUpdateStatus(false)
-      }
-    }
-  }
 
   Timer {
     id: aiCursorTimer
@@ -5679,7 +5632,7 @@ Item {
             counts: root.profileCounts
             storage: root.profileStorage
             exposure: root.profileExposure
-            updateData: root.applicationUpdateData
+            appInfoData: root.applicationInfoData
             sourceHealthData: root.sourceHealthData
             sourceHealthBusy: sourceHealthProc.running
             feedsRefreshing: refreshProc.running
@@ -5693,8 +5646,6 @@ Item {
             interestBusy: interestProc.running
             transferBusy: root.readingSizeSaving || root.articleImagesSaving || profileTransferProc.running
             resetBusy: profileResetProc.running || root.readingEventsBusy
-            updateBusy: updateStatusProc.running
-            updateLaunching: root.applicationUpdateLaunching
             confirmReset: root.confirmProfileReset
 
             onDestinationRequested: function(destination) {
@@ -5722,8 +5673,6 @@ Item {
             onExportRequested: root.exportProfile()
             onImportRequested: root.importProfile()
             onResetRequested: root.resetProfileLearning()
-            onUpdateCheckRequested: root.loadApplicationUpdateStatus(true)
-            onUpdateInstallRequested: root.installApplicationUpdate()
             onSourceHealthRequested: root.loadSourceHealth()
             onFeedsRefreshRequested: root.refresh(false)
           }

@@ -114,7 +114,7 @@ class ArticleImageTests(unittest.TestCase):
 
     def test_private_dns_targets_are_rejected_before_connect(self):
         for address in ['127.0.0.1','10.1.2.3','169.254.169.254','::1']:
-            with mock.patch.object(self.images.socket,'getaddrinfo',return_value=[(2,1,6,'',(address,443))]), mock.patch.object(self.images.socket,'create_connection') as connect:
+            with mock.patch.object(self.images.news_http.socket,'getaddrinfo',return_value=[(2,1,6,'',(address,443))]), mock.patch.object(self.images.news_http.socket,'socket') as connect:
                 with self.assertRaises(ValueError): self.images.download_image('https://example.com/image')
                 connect.assert_not_called()
 

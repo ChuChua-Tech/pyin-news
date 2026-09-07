@@ -181,11 +181,12 @@ class ClaudeProviderTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'ANTHROPIC_BASE_URL':'https://new-provider.example'}):
             self.assertFalse(self.backend.ai_models()['cached'])
         self.backend.AGENT_PATH.write_text('codex')
-        with mock.patch.object(self.backend, 'codex_path', return_value='/fake/codex'), \
-             mock.patch.object(self.backend, 'discover_codex_models', return_value=[]):
+        with mock.patch.object(self.backend.subprocess, 'Popen') as launch:
             result = self.backend.ai_models()
             self.assertEqual(result['agent'], 'codex')
             self.assertEqual(result['models'], [])
+            self.assertFalse(result['ok'])
+            launch.assert_not_called()
 
     def test_bracketed_model_round_trips_but_invalid_input_does_not_save(self):
         self.backend.save_setup_profile(json.dumps(self.backend.default_setup_profile()))

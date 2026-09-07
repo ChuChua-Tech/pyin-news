@@ -3,6 +3,23 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.25.1] - 2026-09-06
+
+### Security
+
+- Route feed, article and optional image downloads through one bounded public-web
+  transport. Reject non-public and mixed DNS answers, bind connections to the
+  checked numeric IP, verify the connected peer, and validate every redirect.
+  HTTPS retains certificate and hostname verification. Private/LAN feeds and
+  proxy environment variables are no longer supported for these downloads.
+- Remove Codex summary execution and model discovery because the adapter did
+  not guarantee that local file and process tools were disabled. Setup and
+  Profile explain its unavailability; saved preferences and Omarchy settings
+  remain intact. Claude Code, Gemini CLI, Grok Build, Local server and No AI
+  remain available.
+- Remove PYIN's mutable-HEAD self-updater, including its CLI and QML actions.
+  Profile shows local version information; updates are managed through Omarchy.
+
 ## [0.25.0] - 2026-09-06
 
 ### Added
