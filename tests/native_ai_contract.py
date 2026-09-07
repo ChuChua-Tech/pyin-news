@@ -112,6 +112,22 @@ def worker(descriptor_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     endpoint = f"http://127.0.0.1:{server.server_port}"
     original = base/"original"; original.mkdir()
+    # Reproduce the desktop PATH: mise shims come before concrete binaries.
+    # The fake launcher must never run; discovery must use installed files.
+    mise = base/"mise"
+    mise.write_text('#!/bin/sh\necho 2026.9.1\nexit 91\n'); mise.chmod(0o700)
+    mise_root = Path.home()/".local/share/mise"
+    shims = mise_root/"shims"; shims.mkdir(parents=True)
+    native_paths = {agent:executable}
+    if descriptor.get("node"):
+        native_paths["node"] = descriptor["node"]
+    config = Path.home()/".config/mise/config.toml"; config.parent.mkdir(parents=True)
+    config.write_text('[tools]\n' + ''.join(name+'="fixture"\n' for name in native_paths))
+    for name, native_path in native_paths.items():
+        entry = mise_root/"installs"/name/"fixture/bin"/name
+        entry.parent.mkdir(parents=True); entry.symlink_to(native_path)
+        (shims/name).symlink_to(mise)
+    os.environ["PATH"] = str(shims)+":/usr/bin:/bin"
     if agent == "codex":
         config = Path.home()/".codex"; config.mkdir()
         (config/"AGENTS.md").write_text(PRIVATE)
@@ -145,9 +161,7 @@ def worker(descriptor_path):
 
     backend = load_backend()
     isolate_backend(backend,base/"backend")
-    backend.system_agent_path = lambda name: executable
-    backend.codex_path = lambda: executable
-    backend.claude_path = lambda: executable
+    assert backend.system_agent_path(agent) == executable, "mise shim did not resolve the native agent"
     backend.CLAUDE_SUMMARY_TIMEOUT_SECONDS = backend.ACP_SUMMARY_TIMEOUT_SECONDS = 30
     cases = [("summary", False, {}), ("forced tool", True, {})]
     if agent == "codex":
@@ -188,7 +202,7 @@ def worker(descriptor_path):
         if choice.get("model"):
             assert all(request.get("model") == choice["model"] for request in requests), "selected model changed"
             assert all(request.get("reasoning",{}).get("effort") != "ultra" for request in requests), "inherited another model's effort"
-        print(json.dumps({"agent":agent,"case":case, "tools":0,
+        print(json.dumps({"agent":agent,"case":case, "launcher":"mise shim", "tools":0,
                           "private_file_reads":0,"private_context_sent":False,"outcome":outcome}),flush=True)
     server.shutdown()
 
@@ -208,13 +222,13 @@ def main():
             base = Path(temporary)
             private_root = base/"user"; private_root.mkdir()
             descriptor = base/"test.json"
-            descriptor.write_text(json.dumps({"agent":agent,"executable":str(executable)}))
+            node = backend.news_ai.resolve_executable("node",shutil.which("node"))
+            descriptor.write_text(json.dumps({"agent":agent,"executable":str(executable),"node":node}))
             command = [shutil.which("bwrap"),"--die-with-parent","--unshare-net","--unshare-pid","--unshare-ipc",
                        "--ro-bind","/","/","--tmpfs","/tmp","--bind",str(base),str(base),
                        "--bind",str(private_root),str(Path.home()),"--tmpfs","/run/user",
                        "--ro-bind",str(ROOT),str(ROOT)]
             bundles = {backend.news_ai._runtime_bundle(executable),Path(sys.base_prefix)}
-            node = shutil.which("node")
             if node:
                 bundles.add(backend.news_ai._runtime_bundle(Path(node).resolve()))
             for bundle in sorted(bundles):

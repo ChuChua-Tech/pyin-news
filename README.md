@@ -288,6 +288,9 @@ native Messages stream, Gemini uses ACP, and Grok uses ACP for discovery and its
 restricted headless interface for summaries. No Python AI SDK is required.
 Bubblewrap is required for native agents; if missing, install it with
 `omarchy pkg add bubblewrap`.
+Omarchy's mise launchers are resolved from global tool-version settings to
+installed executables before launch. PYIN does not run mise hooks or installers;
+if that configured installation is missing, it reports the missing dependency.
 
 The compatibility check runs before article text is sent. This release verifies:
 

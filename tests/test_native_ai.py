@@ -130,6 +130,51 @@ class NativeConfigurationTests(unittest.TestCase):
         result = ai.clean_environment('claude', source)
         self.assertEqual(result, {'HOME':source['HOME'], 'PATH':'/usr/bin:/bin','ANTHROPIC_API_KEY':'native-key'})
 
+    def test_desktop_mise_shims_resolve_all_agents_and_node_without_running_mise(self):
+        root = self.root/'.local/share/mise'
+        shims = root/'shims'; shims.mkdir(parents=True)
+        mise = self.root/'mise'; mise.write_text('#!/bin/sh\nexit 99\n'); mise.chmod(0o700)
+        config = self.root/'.config/mise/config.toml'; config.parent.mkdir(parents=True)
+        config.write_text('[tools]\ncodex="pinned"\nclaude="pinned"\n'
+                          'gemini={version="pinned"}\n"npm:@xai-official/grok"="pinned"\nnode=["pinned"]\n')
+        for name, folder, relative in (
+            ('codex','codex','bin/codex'), ('claude','claude','claude'),
+            ('gemini','gemini','node_modules/.bin/gemini'),
+            ('grok','npm-xai-official-grok','node_modules/.bin/grok'), ('node','node','bin/node'),
+        ):
+            native = root/'installs'/folder/'pinned'/relative
+            native.parent.mkdir(parents=True,exist_ok=True); native.write_text('native'); native.chmod(0o700)
+            shim = shims/name; shim.symlink_to(mise)
+            with self.subTest(name=name), mock.patch.object(Path,'home',return_value=self.root), \
+                 mock.patch.dict(os.environ,{'PATH':str(shims)},clear=True), \
+                 mock.patch.object(ai.subprocess,'Popen') as launch:
+                self.assertEqual(ai.resolve_executable(name,str(shim)),str(native))
+                if name != 'node':
+                    self.assertEqual(load_backend().system_agent_path(name),str(native))
+                launch.assert_not_called()
+
+    def test_omarchy_installer_wrapper_is_resolved_without_installing_or_using_latest(self):
+        root = self.root/'.local/share/mise'
+        native = root/'installs/codex/pinned/bin/codex'
+        native.parent.mkdir(parents=True); native.write_text('native'); native.chmod(0o700)
+        (root/'installs/codex/latest').symlink_to('pinned')
+        wrapper = self.root/'.local/bin/codex'; wrapper.parent.mkdir(parents=True)
+        wrapper.write_text('#!/bin/bash\nmise use -g --quiet "codex" || exit 1\n'
+                           'exec mise x "codex" -- "codex" "$@"\n'); wrapper.chmod(0o700)
+        config = self.root/'.config/mise/config.toml'; config.parent.mkdir(parents=True)
+        for version, expected in [('pinned',str(native)), ('not-installed',''), ('{{exec(command="bad")}}','')]:
+            config.write_text('[tools]\ncodex='+json.dumps(version)+'\n')
+            with self.subTest(version=version), mock.patch.object(Path,'home',return_value=self.root), \
+                 mock.patch.dict(os.environ,{},clear=True), mock.patch.object(ai.subprocess,'Popen') as launch:
+                self.assertEqual(ai.resolve_executable('codex',str(wrapper)),expected)
+                launch.assert_not_called()
+
+    def test_direct_native_path_keeps_precedence_over_mise(self):
+        direct = self.root/'codex'; direct.write_bytes(b'\x7fELF'); direct.chmod(0o700)
+        with mock.patch.object(ai.subprocess,'Popen') as launch:
+            self.assertEqual(ai.resolve_executable('codex',str(direct)),str(direct))
+            launch.assert_not_called()
+
     def test_codex_retains_only_model_configuration(self):
         config = self.root/'.codex'
         config.mkdir()

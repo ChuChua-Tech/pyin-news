@@ -116,6 +116,69 @@ def native_env_file(path: Path, allowed: set[str]) -> dict[str, str]:
     return result
 
 
+def resolve_executable(name: str, found: str | None) -> str:
+    """Resolve Omarchy's mise launchers using installed files, without running mise.
+
+    A mise shim is a symlink to a multicall executable. Resolving that symlink
+    and executing it as `mise` loses the original command name. The desktop
+    normally has these shims on PATH, whereas interactive terminals have the
+    concrete installation paths. Only global tool-version values are read here;
+    config hooks, templates, environment and installer commands are not run.
+    """
+    if not found:
+        return ""
+    candidate = Path(found)
+    try:
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_file() or not os.access(resolved, os.X_OK):
+            return ""
+        data_root = Path(os.environ.get("MISE_DATA_DIR", str(
+            Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "mise")))
+        launcher = resolved.name == "mise" and candidate.parent.name == "shims"
+        if launcher:
+            data_root = candidate.parent.parent
+        elif candidate.parent == Path.home() / ".local/bin" and candidate.stat().st_size <= 4096:
+            script = candidate.read_bytes()
+            if script.startswith(b"#!"):
+                launcher = bool(re.search(r'^exec mise x "[^"]+" -- "' + re.escape(name)
+                                          + r'" "\$@"$', script.decode("utf-8"), re.MULTILINE))
+        if not launcher:
+            return str(resolved)
+        aliases = {
+            "codex": ("codex", "aqua:openai/codex"),
+            "claude": ("claude", "aqua:anthropics/claude-code"),
+            "gemini": ("gemini", "npm:@google/gemini-cli"),
+            "grok": ("grok", "npm:@xai-official/grok"),
+            "node": ("node", "core:node"),
+        }.get(name, (name,))
+        config_dir = Path(os.environ.get("MISE_CONFIG_DIR", str(
+            Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "mise")))
+        config_path = Path(os.environ.get("MISE_GLOBAL_CONFIG_FILE", str(config_dir / "config.toml")))
+        tools = tomllib.loads(config_path.read_text(encoding="utf-8")).get("tools", {})
+        if not isinstance(tools, dict):
+            return ""
+        selected_alias = next((key for key in aliases if key in tools), None)
+        selected = tools.get(selected_alias)
+        if isinstance(selected, list):
+            selected = selected[0] if selected else None
+        if isinstance(selected, dict):
+            selected = selected.get("version")
+        if not isinstance(selected, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}", selected):
+            return ""
+        for alias in (selected_alias, *(key for key in aliases if key != selected_alias)):
+            folder = re.sub(r"[^A-Za-z0-9-]+", "-", alias).strip("-")
+            install = data_root / "installs" / folder / selected
+            for relative in (Path("bin") / name, Path(name), Path("node_modules/.bin") / name):
+                executable = install / relative
+                if executable.is_file() and os.access(executable, os.X_OK):
+                    target = executable.resolve(strict=True)
+                    if target.name != "mise":
+                        return str(target)
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
 def _runtime_bundle(executable: Path) -> Path:
     # Omarchy installs pinned agent versions with mise. Mount that installation,
     # not the user's mise configuration, shims, other agents or project files.
@@ -138,7 +201,10 @@ def isolated_command(
     wrapper = shutil.which("bwrap")
     if not wrapper:
         raise RuntimeError("AI summaries need Bubblewrap. Install the bubblewrap package with Omarchy.")
-    executable = Path(command[0]).resolve(strict=True)
+    native_path = resolve_executable(agent, command[0])
+    if not native_path:
+        raise RuntimeError(f"PYIN could not locate the installed {agent.capitalize()} executable behind its launcher. Check its installation.")
+    executable = Path(native_path)
     user_root = Path.home()
     runtime_root = directory / "user"
     runtime_root.mkdir(mode=0o700, exist_ok=True)
@@ -163,7 +229,7 @@ def isolated_command(
     with executable.open("rb") as stream:
         native_binary = stream.read(4) == b"\x7fELF"
     if agent in {"gemini", "grok"} or not native_binary:
-        node = shutil.which("node")
+        node = resolve_executable("node", shutil.which("node"))
         if not node:
             raise RuntimeError(f"{agent.capitalize()} needs its Node.js runtime.")
         node_path = Path(node).resolve(strict=True)

@@ -23,6 +23,9 @@ Versioning.
 - When PYIN selects a different Codex model, use that model's default reasoning
   unless explicitly overridden. Do not inherit an incompatible effort from the
   model configured in Codex.
+- Resolve Omarchy's mise shims and installer launchers to the selected installed
+  agent and Node runtime before isolation. Desktop TL;DR requests now check the
+  agent's version instead of mistaking mise's version for Codex.
 - Bound AI input, output and process lifetime, reject response tool calls, and
   constrain Local server requests to numeric loopback peers with no redirects or
   inherited proxy settings. Local server and No AI remain available.

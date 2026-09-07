@@ -3415,25 +3415,25 @@ def reset_learning() -> dict[str, Any]:
 def codex_path() -> str:
     found = shutil.which("codex")
     if found:
-        return found
+        return news_ai.resolve_executable("codex", found)
     candidates = [
         Path.home() / ".local/bin/codex",
         Path.home() / ".local/share/mise/installs/codex/latest/bin/codex",
     ]
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+            return news_ai.resolve_executable("codex", str(candidate))
     return ""
 
 
 def claude_path() -> str:
     found = shutil.which("claude")
     if found:
-        return found
+        return news_ai.resolve_executable("claude", found)
     for candidate in (Path.home() / ".local/bin/claude",
                       Path.home() / ".local/share/mise/installs/claude/latest/claude"):
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+            return news_ai.resolve_executable("claude", str(candidate))
     return ""
 
 
@@ -3446,7 +3446,8 @@ def system_agent_path(agent: str) -> str:
         return ""
     found = shutil.which(agent)
     candidate = Path.home() / ".local/bin" / agent
-    return found or (str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else "")
+    return news_ai.resolve_executable(agent, found or (
+        str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else ""))
 
 
 def human_age(timestamp: int, now: int) -> str:
