@@ -72,6 +72,11 @@ class ClaudeProviderTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
         self.backend = load_backend()
+        boundary = mock.patch.object(self.backend.news_ai, 'prepare_native',
+            side_effect=lambda agent, command, directory, environment=None:
+                (command, {**os.environ, **(environment or {})}))
+        boundary.start()
+        self.addCleanup(boundary.stop)
         isolate_backend(self.backend, temporary.name)
         self.backend.AGENT_PATH = self.base / 'agent'
         self.backend.AGENT_PATH.write_text('claude')
@@ -181,11 +186,12 @@ class ClaudeProviderTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'ANTHROPIC_BASE_URL':'https://new-provider.example'}):
             self.assertFalse(self.backend.ai_models()['cached'])
         self.backend.AGENT_PATH.write_text('codex')
-        with mock.patch.object(self.backend.subprocess, 'Popen') as launch:
+        with mock.patch.object(self.backend.subprocess, 'Popen') as launch, \
+             mock.patch.object(self.backend, 'discover_codex_models', return_value=[]):
             result = self.backend.ai_models()
             self.assertEqual(result['agent'], 'codex')
             self.assertEqual(result['models'], [])
-            self.assertFalse(result['ok'])
+            self.assertTrue(result['ok'])
             launch.assert_not_called()
 
     def test_bracketed_model_round_trips_but_invalid_input_does_not_save(self):
@@ -204,10 +210,11 @@ class ClaudeProviderTests(unittest.TestCase):
         runner.write_text('''from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
-import sys
+import sys, os
 loader=SourceFileLoader('backend',sys.argv[1]);b=module_from_spec(spec_from_loader(loader.name,loader));loader.exec_module(b)
 b.STATE_DIR=Path(sys.argv[2])/'state';b.CONFIG_DIR=Path(sys.argv[2])/'config'
 b.claude_path=lambda:sys.argv[3]
+b.news_ai.prepare_native=lambda agent, command, directory, environment=None: (command, {**os.environ, **(environment or {})})
 b.claude_exchange('Article',{'model':'','effort':''},lambda delta:None)
 ''')
         process = subprocess.Popen([sys.executable, '-B', str(runner), str(ROOT / 'bin/chuchua-news'), str(self.base), str(self.executable)],

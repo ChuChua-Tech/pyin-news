@@ -12,11 +12,17 @@ Versioning.
   checked numeric IP, verify the connected peer, and validate every redirect.
   HTTPS retains certificate and hostname verification. Private/LAN feeds and
   proxy environment variables are no longer supported for these downloads.
-- Remove Codex summary execution and model discovery because the adapter did
-  not guarantee that local file and process tools were disabled. Setup and
-  Profile explain its unavailability; saved preferences and Omarchy settings
-  remain intact. Claude Code, Gemini CLI, Grok Build, Local server and No AI
-  remain available.
+- Preserve Codex summaries, native sign-in and dynamic model discovery through
+  an isolated app-server with tools disabled. Apply private runtimes and filtered
+  configuration to Claude Code, Gemini CLI and Grok Build too. Personal files,
+  instructions and agent customizations are excluded; native credential files
+  remain available to their own agent for sign-in and refresh.
+- Check native agent compatibility before sending article text. Unverified
+  versions and unsupported authentication configurations stop with an actionable
+  error; they never fall back to a less restricted invocation.
+- Bound AI input, output and process lifetime, reject response tool calls, and
+  constrain Local server requests to numeric loopback peers with no redirects or
+  inherited proxy settings. Local server and No AI remain available.
 - Remove PYIN's mutable-HEAD self-updater, including its CLI and QML actions.
   Profile shows local version information; updates are managed through Omarchy.
 

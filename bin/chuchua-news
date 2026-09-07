@@ -42,6 +42,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import news_images
 import news_http
+import news_ai
 PLUGIN_DIR = SCRIPT_DIR.parent
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_ID
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / APP_ID
@@ -5347,15 +5348,15 @@ def system_ai_status() -> dict[str, Any]:
     if not agent:
         status = "unset"
         message = "No AI agent is selected in Omarchy. Choose one in Omarchy, or use Local server or No AI."
-    elif agent == "codex":
-        status = "disabled"
-        message = "Codex summaries are unavailable in PYIN until a tool-free adapter is verified. Use a supported Omarchy agent, Local server or No AI. Your Codex settings have not changed."
-    elif agent not in {"claude", "gemini", "grok"}:
+    elif agent not in {"codex", "claude", "gemini", "grok"}:
         status = "unsupported"
         message = f"{label} is selected in Omarchy. PYIN does not support this agent yet. Local server and No AI remain available."
     elif not system_agent_path(agent):
         status = "missing"
         message = f"{label} is selected in Omarchy, but its command is unavailable. Check its installation, or use Local server or No AI."
+    elif not shutil.which("bwrap"):
+        status = "missing"
+        message = "Secure AI summaries need Bubblewrap. Install the bubblewrap package with Omarchy, or use Local server."
     else:
         status = "available"
         message = f"{label} is selected in Omarchy. PYIN uses its existing sign-in and model settings. Sign-in is checked when you request a summary."
@@ -5369,6 +5370,51 @@ def require_system_ai() -> None:
         raise RuntimeError(str(status["message"]))
 
 
+def codex_exchange(prompt: str | None, choice: dict[str, str],
+                   on_delta: Callable[[str], None]) -> dict[str, Any]:
+    ensure_dirs()
+    with tempfile.TemporaryDirectory(prefix="codex-", dir=STATE_DIR) as temporary:
+        return news_ai.codex_exchange(codex_path(), Path(temporary), prompt, choice,
+                                      on_delta, timeout=30 if prompt is None else 180)
+
+
+def discover_codex_models() -> list[dict[str, Any]]:
+    catalog = codex_exchange(None, {"model": "", "effort": ""}, lambda delta: None)
+    rows = catalog.get("models")
+    if not isinstance(rows, list) or len(rows) > 1000:
+        raise RuntimeError("Codex returned an invalid model catalog. Retry or enter a model manually.")
+    models = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("hidden"):
+            continue
+        modalities = row.get("inputModalities", ["text"])
+        if not isinstance(modalities, list) or "text" not in modalities:
+            continue
+        try:
+            model = validate_model_identifier(row.get("model", ""))
+        except ValueError:
+            continue
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        efforts = []
+        for item in row.get("supportedReasoningEfforts") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                effort = validate_model_identifier(item.get("reasoningEffort", ""), effort=True)
+            except ValueError:
+                continue
+            if effort and effort not in [entry["value"] for entry in efforts]:
+                efforts.append({"value": effort, "label": effort,
+                                "description": clean_profile_text(item.get("description"), 240)})
+        models.append({"value": model, "label": clean_profile_text(row.get("displayName"), 200) or model,
+                       "description": clean_profile_text(row.get("description"), 400),
+                       "efforts": efforts, "is_default": row.get("isDefault") is True})
+    return models
+
+
 
 
 def claude_command(choice: dict[str, str]) -> list[str]:
@@ -5377,6 +5423,7 @@ def claude_command(choice: dict[str, str]) -> list[str]:
     command = [claude_path(), "--print", "--input-format", "stream-json",
                "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--safe-mode", "--tools", "", "--permission-mode", "dontAsk",
+               "--disallowedTools", "*", "--settings", '{"disableAllHooks":true}',
                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                "--no-session-persistence", "--disable-slash-commands", "--max-turns", "1",
                "--system-prompt", "You are PYIN News's article summarizer. Use only the supplied "
@@ -5433,6 +5480,7 @@ def messages_exchange(
                 command.extend(["--model", choice["model"]])
             if choice["effort"]:
                 command.extend(["--reasoning-effort", choice["effort"]])
+        command, environment = news_ai.prepare_native(agent, command, Path(working), environment)
         process = subprocess.Popen(
             command, cwd=working, env=environment, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -5549,8 +5597,8 @@ def messages_exchange(
                           "parent_tool_use_id": None, "session_id": ""})
                 elif message_type == "system" and message.get("subtype") == "init":
                     actual_model = clean_profile_text(message.get("model"), 200)
-                    if agent == "grok" and (message.get("tools") or message.get("mcp_servers")):
-                        raise RuntimeError("Grok did not disable tools for this summary. Update its CLI.")
+                    if message.get("tools") or message.get("mcp_servers"):
+                        raise RuntimeError(f"{agent_label} did not disable tools for this summary. Check for a PYIN update.")
                 elif message_type == "stream_event" and not message.get("parent_tool_use_id"):
                     event = message.get("event") or {}
                     if not isinstance(event, dict):
@@ -5562,6 +5610,8 @@ def messages_exchange(
                             actual_model = clean_profile_text(body.get("model"), 200) or actual_model
                     elif event.get("type") == "content_block_start":
                         block = event.get("content_block")
+                        if isinstance(block, dict) and block.get("type") in {"tool_use", "server_tool_use"}:
+                            raise RuntimeError(f"{agent_label} attempted a tool call. The summary was stopped.")
                         if isinstance(block, dict) and block.get("type") == "text" and isinstance(event.get("index"), int):
                             text_blocks.add(event.get("index"))
                     elif event.get("type") == "content_block_delta" and isinstance(event.get("index"), int) and event.get("index") in text_blocks:
@@ -5576,6 +5626,8 @@ def messages_exchange(
                     actual_model = clean_profile_text(body.get("model"), 200) or actual_model
                     blocks = body.get("content") or []
                     if isinstance(blocks, list):
+                        if any(isinstance(block, dict) and block.get("type") in {"tool_use", "server_tool_use"} for block in blocks):
+                            raise RuntimeError(f"{agent_label} attempted a tool call. The summary was stopped.")
                         assistant_text = "".join(block["text"] for block in blocks
                                                  if isinstance(block, dict) and block.get("type") == "text"
                                                  and isinstance(block.get("text"), str))
@@ -5662,27 +5714,39 @@ def discover_claude_models() -> list[dict[str, Any]]:
 
 def acp_environment(agent: str, directory: Path) -> dict[str, str]:
     """Constrain the session without changing the user's agent configuration."""
-    environment = os.environ.copy()
+    environment = news_ai.clean_environment(agent)
     if agent == "gemini":
-        original_home = Path(environment.get("GEMINI_CLI_HOME", str(Path.home())))
+        original_home = Path(os.environ.get("GEMINI_CLI_HOME", str(Path.home())))
+        for key, value in news_ai.native_env_file(original_home / ".gemini/.env", {
+            "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_CLOUD_PROJECT"
+        }).items():
+            environment.setdefault(key, value)
         isolated_home = directory / "gemini-home"
         isolated_config = isolated_home / ".gemini"
         isolated_config.mkdir(parents=True, mode=0o700)
-        # Keep native session/project logs inside the disposable session. Native
-        # keychain access still works; file-backed sign-in is copied privately.
-        for name in ("settings.json", "oauth_creds.json", "google_accounts.json",
-                     "gemini-credentials.json", "installation_id", ".env"):
-            original_file = original_home / ".gemini" / name
-            if original_file.is_file():
-                shutil.copyfile(original_file, isolated_config / name)
-                (isolated_config / name).chmod(0o600)
+        # Native credentials are mounted individually by prepare_native. Never
+        # copy personal instructions, hooks, .env files or complete settings.
         environment["GEMINI_CLI_HOME"] = str(isolated_home)
         # System settings win over user/workspace settings. Preserve existing
         # authentication and administrative settings, then remove agent actions.
-        original = Path(environment.get("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "/etc/gemini-cli/settings.json"))
-        settings = json.loads(original.read_text()) if original.is_file() else {}
-        if not isinstance(settings, dict):
-            raise ValueError("Gemini system settings must be an object")
+        original = Path(os.environ.get("GEMINI_CLI_SYSTEM_SETTINGS_PATH", "/etc/gemini-cli/settings.json"))
+        settings: dict[str, Any] = {}
+        for source in (original_home / ".gemini/settings.json", original):
+            data = json.loads(source.read_text()) if source.is_file() else {}
+            if not isinstance(data, dict):
+                raise ValueError("Gemini settings must be an object")
+            if isinstance(data.get("model"), dict) and isinstance(data["model"].get("name"), str):
+                settings["model"] = {"name": data["model"]["name"]}
+            auth = data.get("security", {}).get("auth", {})
+            if isinstance(auth, dict):
+                settings.setdefault("security", {}).setdefault("auth", {}).update(
+                    {key: value for key, value in auth.items() if key in {"selectedType", "enforcedType", "useExternal"}})
+            if source == original and isinstance(data.get("admin"), dict):
+                settings["admin"] = data["admin"]
+        auth = settings.get("security", {}).get("auth", {})
+        if (auth.get("selectedType") not in {None, "oauth-personal", "gemini-api-key"}
+                or auth.get("useExternal") or os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"1", "true"}):
+            raise RuntimeError("PYIN's isolated Gemini adapter supports native Google sign-in or a Gemini API key. This authentication method needs compatibility verification.")
         settings.setdefault("tools", {}).update({"core": [], "discoveryCommand": "", "callCommand": ""})
         settings.setdefault("hooksConfig", {})["enabled"] = False
         for feature in ("extensions", "mcp", "skills"):
@@ -5696,7 +5760,11 @@ def acp_environment(agent: str, directory: Path) -> dict[str, str]:
     else:
         # Grok has no safe-mode switch. Give it a disposable application home,
         # retaining model/auth configuration and referencing its existing login.
-        original = Path(environment.get("GROK_HOME", str(Path.home() / ".grok")))
+        original = Path(os.environ.get("GROK_HOME", str(Path.home() / ".grok")))
+        for policy in (Path("/etc/grok/managed_config.toml"), Path("/etc/grok/requirements.toml"),
+                       Path("/etc/claude-code/managed-settings.json"), original / "requirements.toml"):
+            if policy.is_file():
+                raise RuntimeError("This managed or pinned Grok configuration needs compatibility verification before PYIN can use it.")
         isolated = directory / "grok-home"
         isolated.mkdir(mode=0o700)
         retained: dict[str, Any] = {}
@@ -5709,9 +5777,12 @@ def acp_environment(agent: str, directory: Path) -> dict[str, str]:
                     target[key] = value
 
         for name in ("managed_config.toml", "config.toml"):
-            path = original / name
+            path = Path(os.environ.get("GROK_CONFIG_PATH", str(original / name))) if name == "config.toml" else original / name
             if path.is_file():
                 config = tomllib.loads(path.read_text())
+                auth = config.get("auth", {})
+                if config.get("auth_provider_command") or (isinstance(auth, dict) and auth.get("auth_provider_command")):
+                    raise RuntimeError("PYIN cannot run Grok credential helper commands. Use native sign-in or an explicit API key.")
                 for key in ("models", "model", "model_provider", "auth_provider", "auth", "grok_com_config", "endpoints"):
                     if key in config:
                         if not isinstance(config[key], dict):
@@ -5736,12 +5807,8 @@ def acp_environment(agent: str, directory: Path) -> dict[str, str]:
         path = isolated / "config.toml"
         path.write_text("\n".join(json.dumps(key) + " = " + toml_value(value) for key, value in retained.items()) + "\n")
         path.chmod(0o600)
-        # Keep managed security requirements effective in the isolated session.
-        if (original / "requirements.toml").is_file():
-            shutil.copyfile(original / "requirements.toml", isolated / "requirements.toml")
-            (isolated / "requirements.toml").chmod(0o600)
         environment["GROK_HOME"] = str(isolated)
-        environment.setdefault("GROK_AUTH_PATH", str(original / "auth.json"))
+        environment["GROK_AUTH_PATH"] = os.environ.get("GROK_AUTH_PATH", str(original / "auth.json"))
         environment["GROK_TURN_SUMMARY"] = "0"
         environment["GROK_TITLE_REFRESH"] = "0"
     return environment
@@ -5764,6 +5831,7 @@ def acp_exchange(agent: str, prompt: str | None, choice: dict[str, str],
         environment = acp_environment(agent, directory)
         command = [executable, "--acp"] if agent == "gemini" else [
             executable, "--leader-socket", str(directory / "leader.sock"), "agent", "stdio"]
+        command, environment = news_ai.prepare_native(agent, command, directory, environment)
         process = subprocess.Popen(command, cwd=directory, env=environment, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    encoding="utf-8", errors="replace", bufsize=1, start_new_session=True)
@@ -5960,7 +6028,13 @@ def discover_acp_models(agent: str) -> list[dict[str, Any]]:
 
 
 def system_ai_catalog_identity(agent: str) -> str:
-    if agent == "claude":
+    if agent == "codex":
+        config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+        paths = [config / "config.toml", config / "auth.json"]
+        command = codex_path()
+        environment = sorted((key, value) for key, value in os.environ.items()
+                             if key in {"CODEX_HOME", "OPENAI_API_KEY"})
+    elif agent == "claude":
         config = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
         paths = [config / "settings.json", config / ".credentials.json", Path.home() / ".claude.json",
                  Path("/etc/claude-code/managed-settings.json")]
@@ -6014,7 +6088,9 @@ def ai_models(refresh: bool = False) -> dict[str, Any]:
     if cached and not refresh and 0 <= time.time() - cached["fetched_at"] < 900:
         return {"ok": True, "models": cached["models"], "agent": status["agent"], "cached": True}
     try:
-        if status["agent"] in {"gemini", "grok"}:
+        if status["agent"] == "codex":
+            models = discover_codex_models()
+        elif status["agent"] in {"gemini", "grok"}:
             models = discover_acp_models(status["agent"])
         else:
             models = discover_claude_models()
@@ -6090,7 +6166,9 @@ def run_system_ai_stream(
     require_system_ai()
     agent = selected_agent()
     selected = system_ai_configuration(system_preset)
-    if agent == "claude":
+    if agent == "codex":
+        result = codex_exchange(prompt, selected, on_delta)
+    elif agent == "claude":
         result = claude_exchange(prompt, selected, on_delta)
     elif agent == "gemini":
         result = acp_exchange(agent, prompt, selected, on_delta)
@@ -6103,7 +6181,7 @@ def run_system_ai_stream(
 
 
 def local_completion_url(base_url: str) -> str:
-    parsed = urllib.parse.urlsplit((base_url or "").strip())
+    parsed = urllib.parse.urlsplit(news_http.local_url((base_url or "").strip()))
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("Local AI URL must use http:// or https://")
     if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
@@ -6129,13 +6207,13 @@ def run_local_ai(prompt: str, base_url: str, model: str) -> tuple[str, str]:
             "stream": False,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "Accept": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with news_http.local_post(url, body, timeout=180) as response:
             data = json.loads(response.read(4 * 1024 * 1024).decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach local AI server at {url}: {exc.reason}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach local AI server at {url}: {exc}") from exc
     try:
+        _reject_local_tools(data)
         content = data["choices"][0]["message"]["content"]
         if isinstance(content, list):
             content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
@@ -6147,7 +6225,19 @@ def run_local_ai(prompt: str, base_url: str, model: str) -> tuple[str, str]:
     return answer, f"Local AI · {model.strip()}"
 
 
+def _reject_local_tools(data: Any) -> None:
+    if not isinstance(data, dict):
+        return
+    candidates = [data, data.get("message")]
+    for choice in data.get("choices", []) if isinstance(data.get("choices", []), list) else []:
+        if isinstance(choice, dict):
+            candidates.extend([choice, choice.get("delta"), choice.get("message")])
+    if any(isinstance(item, dict) and (item.get("tool_calls") or item.get("function_call")) for item in candidates):
+        raise RuntimeError("Local AI attempted a tool call. PYIN accepts summary text only.")
+
+
 def _stream_content(data: Any) -> str:
+    _reject_local_tools(data)
     if not isinstance(data, dict):
         return ""
     try:
@@ -6208,15 +6298,9 @@ def run_local_ai_stream(
             "stream": True,
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
-        method="POST",
-    )
     parts: list[str] = []
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with news_http.local_post(url, body, timeout=180) as response:
             content_type = str(response.headers.get("Content-Type") or "").casefold()
             if "text/event-stream" not in content_type and "ndjson" not in content_type:
                 data = json.loads(response.read(4 * 1024 * 1024).decode("utf-8", "replace"))
@@ -6240,8 +6324,8 @@ def run_local_ai_stream(
                     if delta:
                         parts.append(delta)
                         on_delta(delta)
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach local AI server at {url}: {exc.reason}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach local AI server at {url}: {exc}") from exc
     answer = "".join(parts).strip()
     if not answer:
         raise RuntimeError("Local AI server returned no message content")
@@ -6255,11 +6339,7 @@ def run_ai(
     local_model: str,
     system_preset: str | dict[str, Any],
 ) -> tuple[str, str]:
-    if provider == "off":
-        raise RuntimeError("AI is disabled in your curation profile")
-    if provider == "local":
-        return run_local_ai(prompt, local_url, local_model)
-    return run_system_ai(prompt, system_preset)
+    return run_ai_stream(prompt, provider, local_url, local_model, system_preset, lambda delta: None)
 
 
 def run_ai_stream(
@@ -6270,11 +6350,28 @@ def run_ai_stream(
     system_preset: str | dict[str, Any],
     on_delta: Callable[[str], None],
 ) -> tuple[str, str]:
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > news_ai.MAX_INPUT_CHARS:
+        raise ValueError("The AI request is empty or too large. Try a shorter question or smaller coverage group.")
+    output_size = 0
+
+    def bounded_delta(delta: str) -> None:
+        nonlocal output_size
+        if not isinstance(delta, str):
+            raise RuntimeError("The AI provider returned invalid summary text.")
+        output_size += len(delta)
+        if output_size > news_ai.MAX_ANSWER_CHARS:
+            raise RuntimeError("The AI provider returned too much summary text.")
+        on_delta(delta)
+
     if provider == "off":
         raise RuntimeError("AI is disabled in your curation profile")
     if provider == "local":
-        return run_local_ai_stream(prompt, local_url, local_model, on_delta)
-    return run_system_ai_stream(prompt, system_preset, on_delta)
+        result = run_local_ai_stream(prompt, local_url, local_model, bounded_delta)
+    else:
+        result = run_system_ai_stream(prompt, system_preset, bounded_delta)
+    if not isinstance(result[0], str) or len(result[0]) > news_ai.MAX_ANSWER_CHARS:
+        raise RuntimeError("The AI provider returned invalid or excessive summary text.")
+    return result
 
 
 def article_row(article_id_value: str) -> sqlite3.Row:

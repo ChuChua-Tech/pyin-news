@@ -191,7 +191,7 @@ class ProviderTests(unittest.TestCase):
                 self.backend.summarize("story", "system", "", "", "balanced", False)
         prompt.assert_not_called()
 
-    def test_codex_is_blocked_before_launch_fetch_or_cache_replay(self):
+    def test_missing_isolation_blocks_codex_before_launch_fetch_or_cache_replay(self):
         self.add_cached_article("balanced")
         self.backend.AGENT_PATH.write_text("codex\n")
         self.backend.save_setup_profile(json.dumps(self.backend.default_setup_profile()))
@@ -199,8 +199,10 @@ class ProviderTests(unittest.TestCase):
         before = self.backend.load_setup_profile()
         with mock.patch.object(self.backend.subprocess, "Popen") as launch, \
              mock.patch.object(self.backend.subprocess, "run") as run, \
+             mock.patch.object(self.backend, "codex_path", return_value="/test/codex"), \
+             mock.patch.object(self.backend.shutil, "which", return_value=None), \
              mock.patch.object(self.backend, "summary_prompt") as prompt:
-            self.assertEqual(self.backend.system_ai_status()["status"], "disabled")
+            self.assertEqual(self.backend.system_ai_status()["status"], "missing")
             for refresh in (False, True):
                 self.assertEqual(self.backend.ai_models(refresh=refresh)["models"], [])
             for choice in ("configured", "balanced", {"model":"saved-model", "effort":"high"}):
@@ -210,7 +212,7 @@ class ProviderTests(unittest.TestCase):
                     lambda: self.backend.summarize("story", "system", "", "", choice, False),
                     lambda: self.backend.summarize_stream("story", "system", "", "", choice, False),
                 ):
-                    with self.assertRaisesRegex(RuntimeError, "Codex summaries are unavailable"):
+                    with self.assertRaisesRegex(RuntimeError, "Bubblewrap"):
                         operation()
             launch.assert_not_called()
             run.assert_not_called()

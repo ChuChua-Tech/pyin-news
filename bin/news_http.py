@@ -6,10 +6,13 @@ re-resolution at connect time. Local AI has a separate, explicitly local path.
 from __future__ import annotations
 
 import http.client
+import contextlib
 import ipaddress
+import os
 import socket
 import ssl
 import time
+import threading
 import urllib.error
 import urllib.parse
 
@@ -155,3 +158,126 @@ def get(url: str, max_bytes: int, *, timeout: float = 14,
             connection.close()
             sock.close()
     raise ValueError("too many web redirects")
+
+
+def local_url(value: str) -> str:
+    """Validate the separately opted-in loopback inference endpoint."""
+    if not isinstance(value, str) or not value or len(value) > 8192:
+        raise ValueError("invalid Local AI URL")
+    if "\\" in value or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+        raise ValueError("invalid characters in Local AI URL")
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme not in {"http", "https"} or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or parsed.username is not None or parsed.password is not None
+            or parsed.port == 0):
+        raise ValueError("Local AI URL must use HTTP(S) on localhost, 127.0.0.1, or ::1 without credentials")
+    return value
+
+
+class LocalResponse:
+    def __init__(self, response, deadline: float, maximum: int):
+        self.response, self.headers = response, response.headers
+        self.deadline, self.maximum, self.size = deadline, maximum, 0
+
+    def chunks(self):
+        while True:
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("Local AI request timed out")
+            chunk = self.response.read1(min(16384, self.maximum + 1 - self.size))
+            if not chunk:
+                return
+            self.size += len(chunk)
+            if self.size > self.maximum:
+                raise ValueError("Local AI response exceeded size limit")
+            yield chunk
+
+    def read(self, maximum: int) -> bytes:
+        self.maximum = min(self.maximum, maximum)
+        return b"".join(self.chunks())
+
+    def __iter__(self):
+        pending = b""
+        for chunk in self.chunks():
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                if len(line) > 1024 * 1024:
+                    raise ValueError("Local AI returned an oversized stream event")
+                yield line
+            if len(pending) > 1024 * 1024:
+                raise ValueError("Local AI returned an oversized stream event")
+        if pending:
+            yield pending
+
+
+@contextlib.contextmanager
+def local_post(url: str, body: bytes, *, timeout: float = 180, max_bytes: int = 4 * 1024 * 1024):
+    """POST only to numeric loopback peers, with no redirects or proxy handling."""
+    parsed = urllib.parse.urlsplit(local_url(url))
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    # localhost is a loopback promise, not a DNS-dependent authorization check.
+    hosts = ("127.0.0.1", "::1") if parsed.hostname == "localhost" else (parsed.hostname,)
+    deadline = time.monotonic() + timeout
+    sock = response = connection = control = timer = None
+    try:
+        for host in hosts:
+            candidate = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                candidate.settimeout(min(5, max(0.01, deadline - time.monotonic())))
+                candidate.connect((host, port))
+                peer = ipaddress.ip_address(candidate.getpeername()[0])
+                if not peer.is_loopback or peer != ipaddress.ip_address(host):
+                    raise ValueError("Local AI connected to an unexpected peer")
+                if parsed.scheme == "https":
+                    candidate = ssl.create_default_context().wrap_socket(candidate, server_hostname=parsed.hostname)
+                    if ipaddress.ip_address(candidate.getpeername()[0]) != peer:
+                        raise ValueError("Local AI TLS peer changed")
+                sock = candidate
+                break
+            except OSError:
+                candidate.close()
+                if host == hosts[-1]:
+                    raise
+            except BaseException:
+                candidate.close()
+                raise
+        sock.settimeout(max(0.01, deadline - time.monotonic()))
+        # HTTPResponse may retain the connection after HTTPConnection closes its
+        # handle. A duplicate lets the deadline interrupt blocked/dribbling reads.
+        control = socket.socket(fileno=os.dup(sock.fileno()))
+
+        def expire():
+            with contextlib.suppress(OSError):
+                control.shutdown(socket.SHUT_RDWR)
+
+        timer = threading.Timer(max(0.01, deadline - time.monotonic()), expire)
+        timer.daemon = True
+        timer.start()
+        connection = http.client.HTTPConnection(parsed.hostname, port)
+        connection.auto_open = 0
+        connection.sock = sock
+        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        connection.request("POST", target, body=body, headers={
+            "Content-Type": "application/json", "Accept": "text/event-stream, application/json",
+            "Accept-Encoding": "identity", "Connection": "close", "Host": parsed.netloc})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise RuntimeError(f"Local AI returned HTTP {response.status}; redirects are not followed.")
+        length = response.getheader("Content-Length")
+        if length is not None and (int(length) < 0 or int(length) > max_bytes):
+            raise ValueError("Local AI response exceeded size limit")
+        yield LocalResponse(response, deadline, max_bytes)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Local AI request timed out")
+    finally:
+        if timer is not None:
+            timer.cancel()
+            timer.join(timeout=0.2)
+        if response is not None:
+            response.close()
+        if connection is not None:
+            connection.close()
+        if sock is not None:
+            sock.close()
+        if control is not None:
+            control.close()
