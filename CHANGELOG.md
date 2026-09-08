@@ -3,6 +3,16 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.25.2] - 2026-09-08
+
+### Fixed
+
+- Keep stories hidden when pressing D in the main list. A save that finished
+  before the collapse animation could be mistaken for a failed launch and
+  restore the story to its original position. Successful read and dismiss
+  actions now remain hidden, preserve the next selection and scroll position,
+  and still recover correctly if a later save fails to start.
+
 ## [0.25.1] - 2026-09-06
 
 ### Security

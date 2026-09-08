@@ -236,6 +236,7 @@ Item {
   property var deferredReadMutationPayload: null
   property bool deferredReadMutationShowLess: false
   property bool readMutationActive: false
+  property bool readMutationAcknowledged: false
   property int readMutationRevision: 0
   property var readMutationContext: ({})
   property var dismissMutationContext: ({})
@@ -2386,6 +2387,7 @@ Item {
 
   function checkReadMutationLaunch(revision, showLess) {
     if (!root.readMutationActive || revision !== root.readMutationRevision
+        || root.readMutationAcknowledged
         || readMutationProc.running || dismissProc.running) return
     root.failReadMutation(showLess, "Could not start the save. Please try again.")
   }
@@ -2407,7 +2409,9 @@ Item {
   function acceptReadMutation(payload, showLess, exitCode, exitStatus) {
     if (!root.readMutationActive) return
     // An exit acknowledges this launch even while the row finishes collapsing.
-    // Invalidate its failed-start fallback, and retain the lock until applied.
+    // runningChanged can follow exited and schedule another failed-start check
+    // at the new revision. Keep that check from rolling back a completed save.
+    root.readMutationAcknowledged = true
     root.readMutationRevision++
     if (exitCode !== 0 || exitStatus !== 0 || !payload || payload.ok !== true
         || typeof payload.article_id !== "string" || typeof payload.read !== "boolean") {
@@ -2424,6 +2428,7 @@ Item {
         || readMutationProc.running || dismissProc.running)
       return false
     var enabled = !Boolean(article.read)
+    root.readMutationAcknowledged = false
     root.readMutationActive = true
     root.readMutationRevision++
     root.readMutationContext = enabled
@@ -2452,6 +2457,7 @@ Item {
       root.statusText = "This story is already hidden · restore it from History → Hidden first"
       return
     }
+    root.readMutationAcknowledged = false
     root.readMutationActive = true
     root.readMutationRevision++
     root.dismissMutationContext = root.beginOptimisticHide(article, true)
