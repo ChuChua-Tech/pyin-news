@@ -97,14 +97,21 @@ function fixture() {
         this.running = false;
         // Quickshell emits runningChanged, but no exited, for a failed start.
       },
-      complete(payload, exitCode = 0, exitStatus = 0) {
+      complete(payload, exitCode = 0, exitStatus = 0, exitBeforeRunningChanged = false) {
         assert.equal(running, true, `${name} must be running before it exits`);
-        this.running = false;
+        if (exitBeforeRunningChanged) running = false;
+        else this.running = false;
         const stdout = collectors.find(value => /Stdout$/.test(value));
         assert.ok(stdout, `${name} must collect stdout`);
         context[stdout].text = JSON.stringify(payload);
         assert.ok(onExited, `${name} must acknowledge its exit`);
         vm.runInContext(`(${onExited[1]})`, context)(exitCode, exitStatus);
+        if (exitBeforeRunningChanged && onRunningChanged) {
+          vm.runInContext(`(function() {
+            var running = false;
+            ${onRunningChanged[1]}
+          })`, context)();
+        }
       },
     };
   }
@@ -1320,6 +1327,32 @@ for (const action of ['read', 'dismiss']) {
     assert.equal(f.processes.loadProc.running, true);
     assert.equal(f.root.toggleRead(f.root.articles[0]), true);
   });
+  for (const exitBeforeRunningChanged of [false, true]) {
+    test(`${action}: successful save stays hidden when runningChanged ${exitBeforeRunningChanged ? 'follows' : 'precedes'} exited`, () => {
+      const f = hideFixture(); start(f); f.flush();
+      process(f).complete({ ok: true, article_id: 'a', article_ids: ['a', 'a2'], read: true, counts: {} },
+        0, 0, exitBeforeRunningChanged);
+      // Let failed-start checks run while the acknowledged row is still animating.
+      f.flush();
+      assert.equal(f.root.readMutationActive, true);
+      assert.equal(f.context.hideCollapseTimer.running, true);
+      assert.equal(f.root.optimisticHiddenIds.a, true);
+      assert.doesNotMatch(f.root.statusText, /could not start/i);
+      assert.equal(f.root.toggleRead(f.root.articles[1]), false);
+      f.context.hideCollapseTimer.trigger(); f.flush();
+      assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c']);
+      f.processes.loadProc.complete({ ok: true, articles: [{ id: 'd' }, { id: 'c' }, { id: 'b' }] });
+      f.flush();
+      assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c', 'd']);
+      assert.equal(f.root.selectedArticle.id, 'b');
+      assert.equal(f.context.headlineList.contentY, 80);
+      // A prior acknowledgement must not disable failure recovery for the next save.
+      start(f); process(f).failToStart(); f.flush();
+      assert.deepEqual(plain(f.root.articles).map(a => a.id), ['b', 'c', 'd']);
+      assert.equal(f.root.readMutationActive, false);
+      assert.match(f.root.statusText, /could not start/i);
+    });
+  }
 }
 
 test('stale pre-hide feed responses cannot resurrect a removed event; refill appends without moving selection', () => {
