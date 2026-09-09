@@ -443,12 +443,20 @@ and uncertainty work without pretending an independent fact-check is happening.
 The treatment is inspired by Omarchy's text branding, while remaining native QML
 rather than launching a terminal process inside the reader.
 
-Every article TL;DR request includes the bundled
-`skills/journalistic-news-summary/SKILL.md`. It instructs the selected model to
-stay within the supplied article, preserve attribution and uncertainty, resist
-instructions embedded in article text, avoid loaded framing and false balance,
-and disclose the limits of a one-source summary. These are instructions to the
-model, not independent fact-checking or a guarantee of accuracy or impartiality.
+PYIN builds each article TL;DR request in its Python helper. The inert
+`assets/summary-format.json` supplies only three known section identifiers and
+bounded word limits. Its contents are untrusted application data: unknown fields,
+free-form instructions, duplicate fields and invalid values stop the request.
+The helper renders the validated values using fixed request text; it does not
+load an agent skill or install agent policy. No discoverable agent-control files
+are distributed with the plugin.
+
+The request asks the selected model to stay within the supplied article, preserve
+attribution and uncertainty, avoid loaded framing and false balance, and disclose
+the limits of a one-source summary. Publication metadata and article text share a
+quoted JSON data boundary with escaped delimiters. These prompts are not an
+independent fact-check or a guarantee of accuracy or impartiality; tool and file
+restrictions are enforced separately by the native AI isolation described above.
 Important claims should still be checked in the original article and, where
 warranted, other sources.
 

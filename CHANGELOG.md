@@ -3,6 +3,21 @@
 All notable changes to PYIN News are recorded here. Versions follow Semantic
 Versioning.
 
+## [0.25.3] - 2026-09-08
+
+### Security
+
+- Remove the discoverable summarization skill from the installed repository.
+  Retain AI summaries through fixed application request text and an inert JSON
+  format file containing only validated section identifiers and bounded word
+  limits. Format data cannot provide free-form instructions or agent policy.
+- Quote publication metadata and article text together as untrusted JSON data,
+  with escaped prompt delimiters. Refresh the summary cache version for the new
+  request format. Existing native AI tool and filesystem restrictions remain.
+- Check the complete Git installation tree as well as release archives against
+  a package path allowlist. Reject unapproved files, agent-control paths and
+  links, including tracked files hidden from archives by export rules.
+
 ## [0.25.2] - 2026-09-08
 
 ### Fixed

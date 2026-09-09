@@ -33,6 +33,12 @@ Maintainer notes:
 4. Run `node --test tests/test_reading_ui.cjs` and check the changed QML in the
    native app. Plugin validation checks package structure, not rendered behavior.
 5. Run `omarchy plugin validate .` on current Omarchy.
+   Run `python .github/scripts/check_release.py` on the committed candidate too.
+   It checks both the full Git installation tree and the exported archive against
+   the package path allowlist, rejects links and agent-control files, and loads
+   the archived summary-format data. Omarchy installs the repository, so an
+   `export-ignore` rule alone cannot exclude a file from installation. Keep local
+   agent guidance outside the tracked tree. Review allowlist changes explicitly.
 6. Run a full refresh from an empty temporary XDG state directory and review
    every source error.
 7. Verify App shows local version information with no update action. Test an
@@ -61,7 +67,8 @@ Do not tag a release while the worktree is dirty or CI is failing.
 
 Run `python tests/native_ai_contract.py` with the verified agents installed, or
 pass selected names such as `python tests/native_ai_contract.py codex`. The test
-creates disposable homes and a private network, uses fake model responses and
+creates disposable homes and a private network, uses the actual summary-format
+loader and prompt builder with fictional article text, fake model responses and
 dummy credentials, and checks empty tool offerings, forced tool calls, private
 file reads and configuration startup. It does not contact inference services
 or use the tester's accounts. The GitHub native-AI job installs explicit agent

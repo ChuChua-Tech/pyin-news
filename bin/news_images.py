@@ -134,7 +134,7 @@ def raster_size(data: bytes) -> tuple[int, int]:
 
 def download_image(url: str) -> bytes:
     data, _, status = news_http.get(url, MAX_BYTES, timeout=10, headers={
-        "User-Agent": "PYIN-News/0.25.2", "Accept": "image/jpeg,image/png,image/webp",
+        "User-Agent": "PYIN-News/0.25.3", "Accept": "image/jpeg,image/png,image/webp",
     })
     if status != 200:
         raise ValueError("image unavailable")

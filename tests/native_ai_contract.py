@@ -163,6 +163,13 @@ def worker(descriptor_path):
     isolate_backend(backend,base/"backend")
     assert backend.system_agent_path(agent) == executable, "mise shim did not resolve the native agent"
     backend.CLAUDE_SUMMARY_TIMEOUT_SECONDS = backend.ACP_SUMMARY_TIMEOUT_SECONDS = 30
+    # Use the real format loader and prompt builder with fictional cached text.
+    # No article fetch or account is needed to check the provider boundaries.
+    prompt = backend.summary_prompt({
+        "title": "Library opening", "source": "Fixture", "published_ts": 1800000000,
+        "url": "https://example.invalid/library", "feed_summary": "",
+        "content": "The library opens on Monday. " * 30,
+    }, "fixture-library")
     cases = [("summary", False, {}), ("forced tool", True, {})]
     if agent == "codex":
         cases.append(("selected model default", False, {"model":"gpt-5.4-mini", "effort":""}))
@@ -172,12 +179,12 @@ def worker(descriptor_path):
         assert watch >= 0 and libc.inotify_add_watch(watch,os.fsencode(private_path),1) >= 0
         try:
             if agent == "codex":
-                result = backend.codex_exchange("Summarize: the library opens on Monday.",
+                result = backend.codex_exchange(prompt,
                                                 choice or {"model":"","effort":""}, lambda text:None)
             elif agent == "gemini":
-                result = backend.acp_exchange(agent,"Summarize: the library opens on Monday.", {"model":"fixture","effort":""}, lambda text:None)
+                result = backend.acp_exchange(agent,prompt, {"model":"fixture","effort":""}, lambda text:None)
             else:
-                result = backend.messages_exchange(agent,"Summarize: the library opens on Monday.", {"model":"fixture","effort":""}, lambda text:None)
+                result = backend.messages_exchange(agent,prompt, {"model":"fixture","effort":""}, lambda text:None)
             outcome = result.get("answer")
         except RuntimeError as error:
             if not attack:
@@ -192,6 +199,7 @@ def worker(descriptor_path):
         os.close(watch)
         assert not read_events, "native agent accessed the private file"
         assert requests, "agent did not reach the fake model"
+        assert "WHAT IS UNCERTAIN" in json.dumps(requests), "summary format did not reach the model"
         assert PRIVATE not in json.dumps(requests), "personal context entered the model request"
         for request in requests:
             for tool in request.get("tools",[]):
