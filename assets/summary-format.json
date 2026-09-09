@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "sections": ["what_happened", "why_it_matters", "what_is_uncertain"],
+  "word_limits": {"summary": 220, "with_context": 340}
+}
